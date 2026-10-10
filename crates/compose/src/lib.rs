@@ -695,6 +695,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let drop_grid = cur_frame.and_then(|f| f.grid).filter(|_| pp.grid_align == GridAlign::AllLines).map(|g| g.1);
         // Align Left Edge (left-to-right paragraphs).
         let drop_align = pp.drop_cap_align_left && pp.direction == designcraft_doc::TextDirection::LeftToRight;
+        // Tab stops for the drop cap, with the start-side indent (the right one, right to left).
+        let drop_tabs = (&pp.tabs[..], if pp.direction == designcraft_doc::TextDirection::RightToLeft { pp.right_indent } else { pp.left_indent });
         if !pp.nested_line_styles.is_empty() && cur.fi < frames.len() {
             // Nested line styles: find where the first lines end in this column, restyle them, and
             // look again (the style changes the widths) until the lines settle.
@@ -706,7 +708,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             for _ in 0..3 {
                 // The same drop cap, spacing, hyphenation and breaker as the layout below.
                 let mut gl = sp.glyphs.clone();
-                let dc = split_drop_cap(db, &mut gl, drop_end, pp.drop_cap_lines, base_leading, base_cap, drop_grid, drop_align);
+                let dc = split_drop_cap(db, &mut gl, drop_end, pp.drop_cap_lines, base_leading, base_cap, drop_grid, drop_align, drop_tabs);
                 let width = |j: usize| {
                     let ind = match &dc {
                         Some(dc) if j < dc.lines => dc.indent(),
@@ -774,7 +776,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let rule_color = |r: &designcraft_doc::Rule, text: &(String, f32)| {
             if r.color == designcraft_doc::TEXT_COLOR { text.clone() } else { (r.color.clone(), r.tint) }
         };
-        let drop_cap = split_drop_cap(db, &mut sp.glyphs, drop_end, pp.drop_cap_lines, base_leading, base_cap, drop_grid, drop_align);
+        let drop_cap = split_drop_cap(db, &mut sp.glyphs, drop_end, pp.drop_cap_lines, base_leading, base_cap, drop_grid, drop_align, drop_tabs);
         // List labels take the default super/subscript settings.
         let label_env = shape::TypeEnv { adv: Default::default(), ..env };
         let list_label = match pp.list_type {
@@ -916,9 +918,6 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         let has_tabs = glyphs.iter().any(|g| g.ch == '\t');
         let mut first_line_rect: Option<(usize, f64, f64, f64)> = None; // frame, baseline, ascent, x-span
         let rtl = pp.direction == designcraft_doc::TextDirection::RightToLeft;
-        // The drop cap's line (frame, index) and the baseline it sits on, once that line is set.
-        let mut drop_line: Option<(usize, usize)> = None;
-        let mut drop_baseline: Option<f64> = None;
         loop {
             if cur.fi >= frames.len() {
                 if let Some(j) = trial_failed(&mut trial, &mut limits, balance_runs < balance_budget) {
@@ -1103,7 +1102,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 let forced_mid = brk == Some(story::FORCED_LINE_BREAK) && !last;
                 let (mut placed, end_x, ratio) =
                     layout_line(&glyphs, s, e, b.hyphen, lx0, lx1, col.x0, &pp, &spacing, ends_para, forced_mid, f.left_page, &bidi_info);
-                // Warichu runs before ruby so a reading is placed over the stacked note.
+                // Warichu runs before ruby so a reading is placed over the stacked note, and before
+                // the drop cap joins the line, so it isn't stacked.
                 let end_x = end_x + warichu::place(&styles_tab, &mut placed);
                 let mut drop_box = None;
                 if line_no == 0
@@ -1114,7 +1114,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     drop_box = Some(DropCapBox {
                         end: dc.end,
                         baseline: baseline + dc.drop,
-                        rect: Rect::new(at, baseline - asc, at + dc.width, baseline + dc.drop + desc),
+                        // From its line's top, or its own top when it rises above that line.
+                        rect: Rect::new(at, (baseline - asc).min(baseline + dc.drop - dc.cap), at + dc.width, baseline + dc.drop + desc),
                     });
                 }
                 ruby::annotate(db, &styles_tab, &mut placed, doc.settings.glyph_fallback);
@@ -1150,15 +1151,6 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     keep_violation: false,
                     drop_cap: drop_box,
                 });
-                if drop_box.is_some() {
-                    drop_line = Some((cur.fi, ft.lines.len() - 1));
-                }
-                if let Some(dc) = &drop_cap
-                    && line_no + 1 == dc.lines
-                    && col_first_line == 0
-                {
-                    drop_baseline = Some(baseline);
-                }
                 for k in line_notes {
                     notes.place(doc, k, cur.fi, cur.col, col_w, f, opts);
                 }
@@ -1194,19 +1186,6 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             }
             if !moved {
                 break;
-            }
-        }
-        // The drop cap sits on its last line's baseline as set (it was placed at the leading's).
-        if let (Some((fi, li)), Some(b), Some(n)) = (drop_line, drop_baseline, drop_cap.as_ref().map(|dc| dc.glyphs.len()))
-            && let Some(l) = out.frames.get_mut(fi).and_then(|f| f.lines.get_mut(li))
-            && let Some(dc) = l.drop_cap.as_mut()
-        {
-            let d = b - dc.baseline;
-            dc.baseline = b;
-            dc.rect.y1 += d;
-            // Its glyphs start the line.
-            for g in l.glyphs.iter_mut().take(n) {
-                g.y += d;
             }
         }
         info.push(ParaInfo {
@@ -2883,15 +2862,23 @@ struct DropCap {
     /// How far its origin sits left of the indent: its first letter's left side bearing with
     /// Align Left Edge, else 0.
     lsb: f64,
-    /// Its baseline below the first line's, at the paragraph's leading.
+    /// Its baseline below the first line's: `lines − 1` leadings of the text after it (grid steps
+    /// on a baseline grid), wherever line `lines` is set.
     drop: f64,
+    /// Its cap height as set (how far its top sits above its baseline).
+    cap: f64,
 }
 
 /// Take the drop cap (the glyphs before byte `end`) off the front of a paragraph's glyphs and scale
 /// it so its cap height reaches from the first line's cap height down to line `lines`' baseline,
-/// measured in the leading and cap height of the text after it.
-/// On a baseline grid of increment `grid`, lines are that many grid steps apart. With
-/// `align_left` its ink starts at the indent (see [`DropCap::lsb`]).
+/// measured in the leading and cap height of the text after it: the size of a cap set at that text's
+/// size. As in InDesign, a cap set larger (or smaller) is scaled by its size over that text's,
+/// keeping its baseline, so it rises above the first line (or falls short of it). A one-line drop cap keeps its own
+/// size when that is smaller. On a baseline grid of increment `grid`, lines are that many grid
+/// steps apart. With `align_left` its ink starts at the indent (see [`DropCap::lsb`]). Tabs inside
+/// it advance to the stops of `tabs` (stops and the start-side indent; in right-to-left paragraphs
+/// both measured from the column's right edge). Spaces right after it join it at its size without
+/// widening it.
 #[allow(clippy::too_many_arguments)]
 fn split_drop_cap(
     db: &ScopedFonts<'_>,
@@ -2902,6 +2889,7 @@ fn split_drop_cap(
     base_cap: f64,
     grid: Option<f64>,
     align_left: bool,
+    tabs: (&[designcraft_doc::TabStop], f64),
 ) -> Option<DropCap> {
     let n = glyphs.iter().take_while(|g| g.byte < end).count();
     if n == 0 {
@@ -2909,17 +2897,26 @@ fn split_drop_cap(
     }
     let lines = lines.clamp(1, MAX_DROP_CAP_LINES) as usize;
     let mut dc: Vec<Glyph> = glyphs.drain(..n).collect();
+    let spaces = glyphs.iter().take_while(|g| g.is_space()).count();
+    let mut after: Vec<Glyph> = glyphs.drain(..spaces).collect();
+    let end = after.last().map_or(end, |g| g.byte.saturating_add(g.len).max(end));
     let body = glyphs.iter().find(|g| g.len > 0 && g.cap > 0.0);
-    let (lead, cap) = body.map_or((base_leading, base_cap), |g| (g.leading, g.cap));
+    let (lead, cap, body_size) = body.map_or((base_leading, base_cap, None), |g| (g.leading, g.cap, Some(g.size)));
     let lead = match grid.map(|inc| (lead / inc - 1e-6).ceil().max(1.0) * inc) {
         Some(pitch) if pitch.is_finite() && pitch > 0.0 => pitch,
         _ => lead,
     };
     let drop = (lines - 1) as f64 * lead;
-    let own = dc.iter().map(|g| g.cap).fold(0.0, f64::max);
-    let k = if own > 0.0 { (drop + cap) / own } else { 1.0 };
+    // The cap's tallest glyph sets its height; its point size over the body's scales the fit.
+    let (own, own_size) = dc.iter().fold((0.0, 0.0), |(c, s), g| if g.cap > c { (g.cap, g.size) } else { (c, s) });
+    let ratio = match body_size {
+        Some(b) if b > 0.0 && own_size > 0.0 && (own_size / b).is_finite() => own_size / b,
+        _ => 1.0,
+    };
+    let k = if own > 0.0 { (drop + cap) / own * ratio } else { 1.0 };
+    let k = if lines == 1 { k.min(1.0) } else { k };
     let k = if k.is_finite() && k > 0.0 { k.min(1000.0) } else { 1.0 };
-    for g in &mut dc {
+    for g in dc.iter_mut().chain(after.iter_mut()) {
         g.adv *= k;
         g.dx *= k;
         g.dy *= k;
@@ -2933,7 +2930,6 @@ fn split_drop_cap(
         g.size *= k;
         g.space *= k;
     }
-    let width = dc.iter().map(|g| g.adv).sum();
     let lsb = match dc.first() {
         Some(g) if align_left => {
             let ink = designcraft_geom::Shape::bounding_box(&*db.outline(g.face.get(), g.gid));
@@ -2942,7 +2938,24 @@ fn split_drop_cap(
         }
         _ => 0.0,
     };
-    Some(DropCap { glyphs: dc, end, lines, width, drop, lsb })
+    // Tabs advance to the paragraph's stops, measured from the column's start edge. Right to left,
+    // its glyphs run from that (right) edge in this order (see `place_drop_cap`).
+    let (stops, indent) = tabs;
+    let mut x = indent - lsb;
+    for i in 0..dc.len() {
+        let tab = match dc.get(i) {
+            Some(g) if g.ch == '\t' => Some(tab_advance(stops, indent, x, dc.get(i + 1..).unwrap_or_default()).0),
+            _ => None,
+        };
+        if let (Some(w), Some(g)) = (tab, dc.get_mut(i)) {
+            g.adv = w;
+        }
+        x += dc.get(i).map_or(0.0, |g| g.adv);
+    }
+    let width = dc.iter().map(|g| g.adv).sum();
+    dc.append(&mut after);
+    let cap = dc.iter().map(|g| g.cap).fold(0.0, f64::max);
+    Some(DropCap { glyphs: dc, end, lines, width, drop, lsb, cap })
 }
 
 impl DropCap {

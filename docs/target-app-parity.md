@@ -1,26 +1,278 @@
-# DesignCraft roadmap
+# DesignCraft parity with Adobe InDesign
 
-- FID1: PDF export normalizes mixed emitted gradient color spaces to RGB with an explicit warning; homogeneous device-space gradients retain their components. Linear/radial, midpoint, archival and print policies have synthetic regression coverage.
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage re-normalized to pre-alpha by the core-workflow gate; earlier today: major, full re-measure against InDesign 2026 21.6; replaces the 2026-10-04 estimate in ROADMAP.md) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
-- AR1.1: Kashida justification tests verify space fallback without Tatweel fonts using an isolated font database, while retaining elongation assertions when fonts support it.
+The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
+summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
+presence checklist is [parity-checklist.md](parity-checklist.md) (`cargo xtask parity`).
 
-- AR1: Arabic IDML controls now retain character direction, kashida switches, diacritic offsets/forms, paragraph policy values and independent story/table directions. Shaping preserves joining context and script/language selection; paragraph-level bidi, contextual digit conversion, mark-safe elongation, RTL columns/tables and physical column insertion have regression coverage. Vendor-specific justification and diacritic presets remain explicit preflight warnings; see docs/arabic-typography.md.
-- CJK1: IDML composite fonts now retain character mappings and metrics; explicit aki, tsume, jidori, em alignment/leading, named/custom kinsoku boundaries, hanging punctuation, tate-chu-yoko offsets and kenten symbols flow through composition and IDML export. Automatic kerning no longer imports inactive numeric values as enormous manual spacing. Composite definitions are editable through commands with undo/cache invalidation. Mojikumi definitions are retained and unsupported spacing-table / push-in-push-out policies are reported by preflight. Full InDesign CJK composition parity, frame-grid layout and detailed ruby remain unfinished. Warichu sets the selected run in smaller lines inside the line after the line is broken.
+## Headline
 
-DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
+| Number | Value | Kind |
+|---|---|---|
+| **Feature breadth** (does each InDesign feature exist?) | **~80%** (range 69–99%) | measured lower and upper bounds, estimate between them (below) |
+| **Ready for real work** (could an InDesign professional switch for real jobs?) | **~47%** (range 42–52%) | estimated, weighted sum (below); 1,150–1,950 h to ~95% |
+| Mainstream practitioner (weekly core of a typical InDesign pro) | **~42%** | 500–850 h to ~95%; estimated, [method below](#mainstream-practitioner-42) |
+| Essentials user (flyers, newsletters: the core only) | **~54%** | 135–250 h to ~95%; estimated, [method below](#essentials-user-54) |
+| Remaining effort to **beta** (~75% ready, main format reliable; 28 points away) | **420–750 Opus 5.5 agent-hours** | estimated |
+| Remaining effort to **full parity** | **1,150–1,950 Opus 5.5 agent-hours** | estimated |
+| Stage | **pre-alpha** (fails the core-workflow gate: no manual text threading); ~15–25 h to alpha | see [roadmap.md](roadmap.md#alpha-gate) |
 
-## Status (2026-10-01)
+## How breadth was measured
 
-**Working today**
+Two measurements bracket it, and neither is the answer by itself.
+
+- **Checklist: 99% (upper bound, measured, self-graded rows).** `cargo xtask parity` scores the 275
+  rows of [parity-checklist.md](parity-checklist.md), weighted P0 = 3, P1 = 2, P2 = 1: 269 done,
+  6 partial, 0 missing. The rows are a catalogue we wrote and were graded by the agents that built
+  the features; "done" means the feature exists, not that it has all of InDesign's options.
+- **Menu dump: 69% (lower bound, measured 2026-10-10).** The main menu tree of the running
+  InDesign 2026 21.6, dumped through its scripting DOM during black-box observation
+  (`plan/indesign/screenshots/menus.txt`, local, never committed: 1,121 entries, 798 leaf items),
+  was matched by a script against every label in the DesignCraft source (engine command labels,
+  `UI_COMMANDS`, the `MENUS` table, dialog and panel strings; case, punctuation and "Show/Hide"
+  variants normalized). Excluded as out of scope or dynamic: the installed-font list (490 items),
+  Plug-Ins, Adobe cloud and AI services (Firefly, Generate, Rewrite, Auto Style, Stock, CC
+  Libraries, Publish Online, Share for Review), InCopy, Help links, window tiling, recent files
+  and workspace names. **331 of 482 in-scope items match (68.7%)**: File 19/26, Edit 28/31,
+  Layout 21/27, Type 49/92, Object 81/110, Table 26/45, View 40/57, Window 50/73, app menu 17/20.
+  It undercounts: some items exist under another label or only in a panel menu (Notes and Track
+  Changes have panels and `note.*` / `changes.*` commands but not InDesign's Type ▸ Notes /
+  Track Changes submenus).
+- **Menu tree from documentation: 75% (cross-check).** The same match against the clean-room menu
+  tree compiled from public documentation (`plan/indesign/04-menu-tree.md`, 689 items): 440 of 590
+  in-scope items (74.6%).
+- **Command surface (measured):** 446 engine commands (188 placed in menus) + 99 UI commands; the
+  menu bar has 9 menus, 49 submenus and 340 items. The original plan targeted ~1,000 commands.
+
+The breadth figure is taken between them, at **~80%**, because the checklist overstates (rows were
+written at a coarse grain and graded by their builders) and the label match understates (label
+differences, panel-only commands).
+
+## How "ready for real work" was estimated
+
+Each dimension below was judged from the code, the tests, the issue tracker (124 issues, 79 open on
+2026-10-10, most from people trying the 0.4/0.5 releases on real work) and the InDesign 2026
+reference material. Weights reflect what an InDesign professional hits first: opening the files
+they receive, setting type exactly, and basic editing that never fails.
+
+| Dimension | Weight | Ready | Remaining (Opus 5.5 h) | Evidence | Doc |
+|---|---|---|---|---|---|
+| Features (depth of each area) | 25% | 55% | 250–400 | 275 catalogue rows exist; many lack options (e.g. Books is 258 lines of engine code, Liquid Layout 329); see the area table | this file |
+| Typography and composition fidelity | 15% | 45% | 120–200 | Knuth–Plass composer, keeps, grids, CJK, Arabic all exist; no comparison with InDesign's line breaks; optical kerning falls back to metrics (#181); overset rule differs (#180); hyphenation patterns for English and Spanish only | [typography-parity.md](typography-parity.md) |
+| File formats | 20% | 40% | 150–250 (+20–60 for INDD integration) | INDD cannot be opened (#21); IDML both ways and verified in InDesign 2026, but real-file bugs open (#193, #338, #339, #340); PDF export strong; PDF/X-4 only | [file-format-parity.md](file-format-parity.md) |
+| UI/UX fidelity | 15% | 45% | 120–180 | Measured InDesign 2026 look; but users report object copy/paste (#351, #348, #185, #164), right-click menus (#238, #187, #160), out-port threading (#352, #194, #165), canvas IME (#322) failing | [ui-parity.md](ui-parity.md) |
+| Stability | 10% | 45% | 60–100 | Never-crash rules and last-resort guards; startup failures on some GPUs and machines (#334, #273, #220, #192, #167, #166); no CI runs the tests on pull requests | [gaps.md](gaps.md) |
+| Performance | 5% | 65% | 40–80 | 300k characters compose in ~38 ms warm; typing repaints in < 1 ms (damage regions); no incremental composition; nothing benchmarked against InDesign; no large real documents | [gaps.md](gaps.md) |
+| Localization | 3% | 45% | 120–180 | 9 translations beyond English; Japanese 95%, most others 83–85%, pt-BR 61%; Hindi, Indonesian, Korean, Vietnamese none | [localization-parity.md](localization-parity.md) |
+| Platforms | 3% | 55% | 40–80 | macOS is where it's tested; Windows and Linux users hit basic failures; web and FreeBSD builds exist | [hardware-parity.md](hardware-parity.md) |
+| Hardware | 2% | 45% | 20–40 | Canvas rasterizes on the CPU (vello_cpu, multithreaded); GPU only presents; printing is `lpr` (no Windows printing, no PostScript) | [hardware-parity.md](hardware-parity.md) |
+| Ecosystem (scripting, plug-ins) | 2% | 15% | 150–250 | Own command/script/MCP API is strong; no ExtendScript/UXP DOM, so InDesign scripts don't run; no plug-ins | [gaps.md](gaps.md) |
+| AI features | 0% (not weighted) | 15% | 60–120 | Agent control through MCP goes beyond InDesign; no generative features (InDesign 2026: Generative Expand, Text to Image, Auto Style) | [gaps.md](gaps.md) |
+| **Weighted sum** | 100% | **47.2% → ~47%** (range 42–52%) | **1,150–1,950** | | |
+
+**How the number is built:** the plain weighted sum of the table above, per the craftrules
+standard: 25×55 + 15×45 + 20×40 + 15×45 + 10×45 + 5×65 + 3×45 + 3×55 + 2×45 + 2×15 = 47.2% →
+**~47%** (range 42–52%, ±5 points of judgement in the dimension values). An earlier version
+today applied a further ×0.9 for cross-cutting core-path failures and reported 42%. That
+multiplicative step was dropped to match the standard (discounts belong only to the mainstream
+and essentials numbers). Those failures are already in the UI/UX (45%) and Stability (45%) rows,
+and the missing manual threading is what holds the stage at pre-alpha through the gate.
+
+## Mainstream practitioner and essentials user
+
+Two narrower questions, computed with the craftrules method so every app's numbers compare. The
+stage still follows the full number (~47%) and the core-workflow gate. All three are estimates.
+
+| Audience | Ready | Opus 5.5 agent-hours to ~95% | Parallelizes | Work that dominates |
+|---|---|---|---|---|
+| Full target (ready for real work) | **~47%** | **1,150–1,950** | ~70% (per crate) | depth across all 19 areas, InDesign scripting compatibility, localization to full in 12 languages, typography fidelity, INDD/IDML exchange |
+| Mainstream practitioner | **~42%** | **500–850** | ~65% | INDD import and IDML real-file corpus (80–160), composition fidelity against InDesign (120–200), depth of the weekly areas (150–240), PDF/X-1a, presets and printing (65–110), editing and threading (45–75), stability and CI (25–45), fonts (10–20) |
+| Essentials user | **~54%** | **135–250** | ~50% | start-up robustness on every GPU (25–45), editing and discoverability bugs: context menus, copy/paste, installer (30–50), threading (15–25), text editing and fonts (20–40), printing on Windows (15–30), depth of the core features (30–60) |
+
+Hours are calibrated as in [Remaining effort and calibration](#remaining-effort-and-calibration)
+(1–2 h per feature arc, 2–4 h per behaviour cluster matched against an oracle). Each audience's
+work is a subset of the one above it: essentials ⊂ mainstream ⊂ full. Human needs: the owner's
+decision on INDD (#114), InDesign oracle captures on the owner's Mac, native-speaker review (full
+only).
+
+### Mainstream practitioner: ~42%
+
+The typical InDesign professional (magazine, book, brochure, packaging-adjacent layout artist)
+uses these weekly: the alpha-gate workflows plus their everyday tools. Excluded: plug-ins and
+scripting compatibility, generative/cloud AI, InCopy and team workflows, specialist hardware,
+interface languages other than the user's own. Depth here is what the feature does when it
+works; interaction, stability and exchange problems are the discounts, so they aren't counted
+twice.
+
+| Area | Weight | Depth | Evidence |
+|---|---|---|---|
+| Document setup: pages, margins, columns, parents, sections | 10% | 65% | features area table |
+| Text frames: type, select, edit, thread, autoflow | 15% | 45% | manual threading missing; autoflow and Primary Text Frame only |
+| Typography: composer, H&J, OpenType, tabs, lists, keeps | 15% | 65% | typography-parity.md: 18 ✓ / 16 ~; Tabs panel missing; InDesign-identical breaks counted under exchange |
+| Paragraph, character and object styles | 10% | 65% | dialogs, based-on, nested/GREP, Quick Apply |
+| Frames, shapes, transform, arrange, align | 10% | 70% | full tool set; copy/paste problems counted under interaction |
+| Colour, swatches, stroke | 8% | 60% | hex entry, CMS depth |
+| Images: place, fit, links, wrap | 10% | 60% | EPS preview only, Edit Original missing |
+| Tables | 5% | 55% | anchored objects in cells, Table Options submenus |
+| Layers | 3% | 75% | |
+| Effects and transparency | 3% | 50% | fidelity unmeasured |
+| Output: PDF export, print, package | 8% | 60% | PDF/X-4 strong; no X-1a, presets, Windows printing |
+| View, navigation, undo, save | 3% | 70% | |
+| **Weighted depth** | 100% | **60.7%** | |
+
+Discounts (multiplicative):
+
+| Discount | Factor | Evidence |
+|---|---|---|
+| Interaction fidelity | ×0.88 | right-click menus fail for some macOS users (#160, #238) and on Linux (#354); Paste in Place lands on page 1 (#348); formatting at a caret discarded (#289); font search focus (#335, #86) |
+| Stability on real machines | ×0.92 | start-up failures on Intel Mac Metal (#334) and Windows drivers (#167, #273, #220, #192, #166); no CI on pull requests; macOS on Apple silicon is solid |
+| File exchange with InDesign users | ×0.85 | `.indd` can't be opened (#21); IDML import/export bugs (#193, #338, #339, #340, #211); opened text reflows: optical kerning (#181), overset rule (#180). Harsher than VectorCraft's ×0.92 because InDesign pros receive and send native files daily |
+
+60.7% × 0.88 × 0.92 × 0.85 = 41.8% → **~42%**. It is lower than the full number (47%)
+because the full number spreads weight over dimensions DesignCraft does relatively well
+(performance, platforms, breadth of the long tail: 99% checklist presence), while the weekly core
+carries the gaps at full weight: threading, editing bugs and INDD exchange.
+
+### Essentials user: ~54%
+
+Someone making a flyer, poster, newsletter or simple booklet: they touch only the core.
+Excluded: advanced options, pro workflows (preflight, separations, books, long-document
+features), exchange edge cases, and everything excluded above.
+
+| Core feature | Weight | Depth | Evidence |
+|---|---|---|---|
+| Launch, welcome screen, new document from a preset | 10% | 80% | presets incl. A6 (#248) |
+| Type text in a frame, select and edit it | 15% | 65% | caret formatting (#289), double-click selection in fields (#189) |
+| Font, size, colour, alignment | 15% | 65% | installed fonts not always found (#161, #110, #107) |
+| Place an image and fit it | 10% | 75% | place gun, fitting |
+| Draw shapes and lines, fill and stroke | 10% | 80% | |
+| Move, resize, rotate, align, duplicate | 10% | 75% | |
+| Copy and paste | 5% | 60% | works on macOS; Paste in Place to the wrong page (#348) |
+| Undo / redo | 5% | 85% | |
+| Save and reopen | 5% | 85% | `.designcraft` round trip, recovery |
+| Export PDF / PNG | 10% | 80% | |
+| Print | 5% | 40% | PDF to `lpr` only, nothing on Windows |
+| **Weighted depth** | 100% | **72.0%** | |
+
+| Discount | Factor | Evidence |
+|---|---|---|
+| Launch and stability | ×0.90 | the start-up failures above hit casual users first and they don't know `WGPU_BACKEND` |
+| Discoverability and UI clarity | ×0.88 | a faithful, dense InDesign UI; right-click menus don't open for some users; the out port looks clickable but does nothing; Windows installer confusing (#64) |
+| Opening files people send them | ×0.95 | casual users get Word, images and PDFs, which place well (docx/rtf/xlsx, PDF pages); INDD is rare for them |
+
+72.0% × 0.90 × 0.88 × 0.95 = 54.2% → **~54%**.
+
+### User evidence (GitHub issues and comments, 2026-10-10)
+
+126 issues and 94 comments; no issues were filed by the maintainer (echelon).
+
+- **Praise:** 7 people in 6 threads (#32 "so damn impressive… InDesign open source for Linux",
+  #77, #107, #113, #197, #328).
+- **Switched-from-InDesign reports:** 0 completed switches. 2 former InDesign users trying real
+  work: #348, a retired designer who lost an Adobe licence, laying out 18 pages; #140. Both were
+  blocked by core-path bugs (paste to page, threading). #320 is an art director with 10 years of
+  daily InDesign asking for a feature.
+- **Open issues (81):**
+  - 44 are core-path bugs (54%), clustering into a few root causes: copy/paste (8),
+    context menus (5), threading (4), launch (6), fonts (5).
+  - 9 are InDesign file-exchange bugs.
+  - 26 are niche requests or polish (HTML export, QuarkXPress import, MCP gateway, theme options).
+  - 2 are meta.
+
+So the user evidence matches the numbers: interest and goodwill are high, and real work is
+stopped by a short list of core-path bugs.
+
+### Why the number went down
+
+The 2026-10-04 estimate said "~83% including depth" and 170 h remaining. It was written before
+anyone outside the project had used the app. New evidence since then:
+
+- 79 open issues, many about core editing on Windows and Linux (copy/paste, context menus,
+  threading, fonts not found, startup crashes), filed against the 0.4 and 0.5 releases.
+- The first measured menu coverage: 69% of the in-scope items of InDesign 21.6's own menu dump.
+- The main file format: InDesign users receive `.indd` files, which DesignCraft can't open. The
+  previous estimate treated INDD as out of scope; a professional can't.
+- No comparison of composition against InDesign exists, so typographic fidelity is unproven.
+
+## Features by area
+
+Breadth is the checklist's measured score; Ready is this review's estimate of depth and reliability.
+Hours overlap with the dimension table (UI and format work sits in both views); the dimension
+table is the one summed.
+
+| Area | Breadth (checklist) | Ready | Hours | Main gaps |
+|---|---|---|---|---|
+| Application shell & workspace | 99% | 55% | 40–60 | context menus not opening on some systems; window controls (#333); System theme (#237); New Window/Arrange; Help menu |
+| Documents, pages, spreads | 100% | 65% | 20–35 | Layout ▸ Pages submenu items, Page Attributes / Color Label, Go Back/Forward, layout grid (CJK) |
+| Layers | 100% | 75% | 5–10 | IDML layer order fixed 2026-10-09; Layer panel options depth |
+| Frames, shapes & paths | 100% | 60% | 25–40 | object copy/paste failures, live-corner handle (#186), reference point relocation (#337), Join/Reverse Path/Convert Point menu |
+| Transform | 100% | 70% | 10–20 | Rotate 180°; transform panel depth |
+| Fill, stroke, colour | 100% | 60% | 20–35 | hex entry (#323); Assign Profiles / Convert to Profile; color-managed proofing depth; Adobe Color Themes OOS |
+| Effects & transparency | 100% | 50% | 20–30 | effects fidelity vs InDesign unmeasured; Clear Effects / Clear All Transparency; flattener depth |
+| Placing & links | 93% | 55% | 20–35 | EPS is preview-only (no PostScript interpreter); Edit Original; placed PDF layer visibility; INDD page place |
+| Type & text frames | 99% | 45% | 40–60 | **no manual threading** (ports drawn, no out-port click, no thread/unthread command: alpha blocker; #352, #194, #165, #140); caret formatting discarded (#289); canvas IME (#322); Notes/Track Changes menus; frame grids |
+| Typography | 100% | 45% | (typography dimension) | see [typography-parity.md](typography-parity.md) |
+| Styles | 100% | 60% | 15–25 | Paragraph Styles edit/delete reported failing (#169); style options depth |
+| Tables | 100% | 55% | 25–40 | anchored objects in cells not drawn (#163); Table ▸ Table Options submenus, Diagonal Lines, Convert Rows, Edit Header/Footer |
+| Long documents | 100% | 45% | 30–50 | Books are shallow (sync, book pagination, book PDF/TOC/index); Table of Contents Styles |
+| Interactivity & digital | 100% | 40% | 30–50 | HTML export basic (#314); fixed-layout EPUB is page images; no animation, timing, media playback |
+| Output & production | 92% | 55% | 40–70 | PDF/X-4 only (no X-1a/X-3), no PDF/print presets or `.joboptions`, print via `lpr` (no Windows), no trapping; Output Preview panel |
+| XML & automation | 100% | 35% | (ecosystem dimension) | no ExtendScript/UXP; XML structure depth |
+| View & navigation | 100% | 65% | 10–20 | Navigator, display badges, Show/Hide extras (content grabber, live corners) |
+| Undo, history, saving | 100% | 70% | 5–10 | Undo/Redo name the action; File ▸ Open Recent |
+| Accessibility | 100% | 50% | 15–25 | tagged PDF exists; PDF/UA validation, reading order depth, screen-reader support in the UI |
+
+## Remaining effort and calibration
+
+**Calibrated against this repo's history.** The first commit was 2026-10-01 09:00; by 2026-10-10
+`origin/main` had 470 commits (77 merged pull requests), 126,411 lines of Rust in 276 files and
+1,122 `#[test]` functions. Commit timestamps show ~43 wall-clock hours of activity (gaps under
+45 minutes), with one to five agents working in parallel, so roughly **100–150 Opus 5.5
+agent-hours** built the current app: ~0.25 h per commit, **1–2 h per feature arc** (a command,
+dialog, IDML and PDF support, tests). The community fixes of 2026-10-09/10 (text composition edge
+cases #282–#298, 40–400 lines each) took about **1–2 h each**. Depth work against an oracle
+(matching InDesign's behaviour exactly) is slower than adding features: **2–4 h per behaviour
+cluster**, more when the oracle has to be built first.
+
+| Work | Opus 5.5 h | Parallelizes? | Needs a human |
+|---|---|---|---|
+| Beta blockers (see [roadmap.md](roadmap.md)) | 420–750 | ~70% (per crate) | owner decision on INDD import (#114); InDesign oracle captures on the owner's Mac |
+| Rest of full parity | 730–1,200 | ~70% | native-speaker review for 12 languages; owner decision on ExtendScript compatibility and AI models |
+| **Total to full parity** | **1,150–1,950** | | |
+
+With four to five agents in parallel and an integrator, the beta work is ~120–200 wall-clock
+hours.
+
+## Methodology and sources
+
+- **Target:** Adobe InDesign 2026, version 21.6.0.57, installed at `/Applications/Adobe InDesign
+  2026/`. Inspected without launching and without reading anything inside the bundle beyond names
+  and listings (clean-room rule, AGENTS.md): `Info.plist` `CFBundleDocumentTypes` and
+  `UTExportedTypeDeclarations` (formats), `.lproj` folder names (25 UI localizations), plug-in
+  folder names (filters), `Presets/` folder names (swatch libraries, workspaces, shortcut sets).
+- **Reference material:** `plan/indesign/01–11` (local, gitignored): overview, UI/UX, feature
+  catalogue, menu tree, tools, panels, dialogs, file formats, shortcuts, typography, and
+  observations of the running app.
+- **DesignCraft measured from source on `origin/main` (92649ff, 2026-10-10)**: command registry,
+  `MENUS`, i18n catalogs, crate line and test counts, format modules. No local build (disk).
+- **User evidence:** GitHub issues #1–#352 and open PRs (65 open, including the INDD converter
+  proposals #98 and #114).
+
+## Appendix: what works today
+
+The inventory below was the "Working today" list of ROADMAP.md (moved here 2026-10-10, unchanged).
+It is evidence of breadth: each item exists. It is not a claim of InDesign-level depth.
+
 - Document model: facing/non-facing spreads, parent pages with page-number markers, sections, layers, frames (text / graphic / unassigned), threaded stories, paragraph/character/object styles with based-on, swatches (process/spot/tints/gradients), corner options, text wrap, drop shadow, opacity/blend.
-- Text engine: Knuth–Plass paragraph composer and single-line composer, dictionary hyphenation (public-domain Moby list + our own trained Liang patterns), justification with word/letter/glyph-scaling ranges, keep options (keep with next, keep lines together — at start/end of paragraph by default, as in InDesign — widows/orphans), balance ragged lines, optical margin alignment, hyphenation zone/limit, columns, threading across frames and spreads, tabs, bullets/numbering, rules, shading, baseline grid, first-baseline options, vertical justification, wrap exclusions, overset detection, caret/hit testing.
+- Text engine: Knuth–Plass paragraph composer and single-line composer, dictionary hyphenation (public-domain Moby list + our own trained Liang patterns), justification with word/letter/glyph-scaling ranges, keep options (keep with next, keep lines together, widows/orphans), balance ragged lines, optical margin alignment, hyphenation zone/limit, columns, threading across frames and spreads, tabs, bullets/numbering, rules, shading, baseline grid, first-baseline options, vertical justification, wrap exclusions, overset detection, caret/hit testing.
 - FID2: IDML underline/strikethrough Text Color resets survive style inheritance and roundtrip. Raster and PDF paint underlines behind glyphs, retain strikethrough above, and center rules on their offsets; synthetic overlap tests cover both backends.
 - Rendering: vello_cpu (SIMD, multithreaded) — pages, items, images with mip levels, gradients, composed text.
 - UI (egui): application bar + menus, Control panel (object and text modes), Tools panel with flyouts, document tabs, rulers, pasteboard, guides (margins, columns, bleed, baseline grid), frame edges, selection handles, text ports and threads, Properties / Pages / Layers dock, Swatches, Styles, Character, Paragraph, Stroke, Text Wrap panels, New Document and Preferences dialogs, Quick Apply (⌘Return), 4 brightness themes.
 - Pen tool, Direct Selection anchor/handle editing, rotate from corners, Rotate/Scale/Shear tools, Eyedropper, snapping & smart guides, Align/Distribute, Find/Change (text + GREP), Story Editor, Paragraph Style Options, Effects panel, hidden characters, native macOS menu bar, measured InDesign 2026 look (Medium Dark): Properties sections per selection state, 21 pt spinner fields with arithmetic, Contextual Task Bar, inverse (black) text selection, Pages panel with drag-and-drop reorder / parent apply, Layers panel with per-object rows.
 - Tools: Selection (click, marquee, move, Alt-duplicate, resize handles), Direct Selection, Type (draw frame, click caret, select, type), Rectangle/Ellipse/Polygon (+ frame variants), Line, Hand, Zoom.
 - PDF export (krilla): real selectable text with embedded font subsets, DeviceCMYK/RGB + spot Separations, bleed boxes, crop/bleed marks + page info, pages or spreads, PDF/A-2b (PDF/X-4 output intent pending) — `file.exportPdf`, File › Export PDF…, `designcraft-cli run --export out.pdf`. File › Export PDF… now opens an "Export PDF" options dialog (General / Compression / Marks and Bleeds / Advanced) and remembers the last-used settings across exports and sessions.
-- IDML interchange (`designcraft-idml`): export and import of swatches, styles, fonts, preferences, parent spreads, spreads/pages, frames, groups, images (embedded or linked), formatted threaded stories; attributes a file leaves unset take InDesign's defaults (Keep Lines Together at start/end of paragraph, 12 pt corners, paragraph rules in Text Color, auto-sizing from the centre, numbered lists restarting in each story, alternating table fills Black 20 % / None; a tint of −1 is the colour's own; frames take the fill, stroke, corners and Text Frame Options they don't write from their object style chain, then [None]) — opens in InDesign 2026 and round-trips InDesign-exported files (`file.exportIdml`, `file.openIdml`, File → Export IDML…, CLI `--in x.idml` / `--export x.idml`).
+- IDML interchange (`designcraft-idml`): export and import of swatches, styles, fonts, preferences, parent spreads, spreads/pages, frames, groups, images (embedded or linked), formatted threaded stories — opens in InDesign 2026 and round-trips InDesign-exported files (`file.exportIdml`, `file.openIdml`, File → Export IDML…, CLI `--in x.idml` / `--export x.idml`).
 - Tables (M8): tables anchored in stories (header/footer/body rows, merged cells, per-edge strokes, fills + alternating fills, insets, vertical justification, at-least/exact row heights); composed into the text column (columns scale to fit, rows break across columns/frames with repeating headers/footers, overset); rendered, exported to PDF (real text) and IDML (export + import); Table menu, Table panel, Create Table dialog, caret/typing/Tab navigation and cell selection in cells; `table.*` commands.
 - Hyperlinks (text or frames → URL / e-mail / page) and bookmarks, exported as PDF link annotations and outline.
 - EPUB 3 (reflowable) export: stories in reading order, CSS from paragraph/character styles, images, navigation (`file.exportEpub`, CLI `--export x.epub`).
@@ -68,7 +320,6 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
 - Appearance of Black complete: Printing/Exporting rich black for RGB output (PNG), Overprint [Black] Swatch at 100% (document, IDML OverprintBlack).
 - Hyperlinks and Bookmarks panels (Window ▸ Interactive): new from the selection, edit (`hyperlink.edit`), go to source (`hyperlink.goToSource`), rename bookmarks (`bookmark.rename`), go to page, delete.
 - Nested line styles (`nestedLineStyles` paragraph attribute, Paragraph Style Options › Drop Caps and Nested Styles, IDML AllNestedLineStyles): the first lines restyle until the line breaks settle.
-- Drop caps (`type.para {dropCapLines, dropCapChars, dropCapStyle, dropCapAlignLeft, dropCapScaleDescenders}`, Paragraph panel, Paragraph Style Options › Drop Caps and Nested Styles; IDML DropCapLines/DropCapCharacters/DropcapDetail, DropCapStyle on import): the first characters (code points, as InDesign counts them, never splitting a letter from its combining marks; up to 150) are enlarged from the first line's cap height down to the baseline of line N (up to 25), the lines beside them are indented by their advance (on the right in right-to-left paragraphs), baselines don't move; Align Left Edge (on by default) moves the drop cap left by its first letter's side bearing so its ink starts at the indent; Scale for Descenders is kept but doesn't change the layout yet; a drop cap character style, and nested styles through the drop cap (Dropcap delimiter). Drawn on screen and in PDF (text in order), with caret, hit testing and selection over the enlarged letters. Vertical text sets no drop caps.
 - User dictionary hyphenation exceptions (`hyphenation.addException/removeException/list`, Edit ▸ Spelling ▸ User Dictionary): `ex~am~ple` breaks only at `~`, a plain word never hyphenates.
 - Frame Fitting Options (`object.fittingOptions`, Object ▸ Fitting ▸ Frame Fitting Options…): Auto-Fit refits on resize, fitting, Align From reference point, crop amounts; IDML FrameFittingOption.
 - Paragraph borders (per-side weights, colour, tint, offsets) and shading offsets, drawn per column part of split paragraphs (also when overset); Paragraph panel controls; IDML ParagraphBorder*/ParagraphShading*Offset.
@@ -110,7 +361,7 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
 - Split Window / New Window (`window.split`, `window.newWindow`, Window ▸ Arrange): two side-by-side views of the document with their own zoom, scroll and render cache. New Window puts the second view in its own OS window (an egui viewport; a floating window on the web).
 - Transparency flattener (`file.exportPdf {flatten: high|medium|low|ppi}`, Edit ▸ Transparency Flattener Presets): each object involving transparency becomes an opaque image of its area over what's beneath it, so everything else stays vector (spreads with transparent parent items are rasterised whole).
 - Video and sound (place .mp4/.mov/.webm/.mp3/.wav…, `media.options/get`, Media panel): media frames show a poster or placeholder on screen, in print and in PDF, and export as HTML5 `<video>`/`<audio>` in EPUB. Interactive PDF export (`file.exportPdf {media: true}`, File ▸ Export PDF (Interactive)) embeds each file and plays it in a Screen annotation through a rendition action (controls, loop, play on page load). No in-app playback.
-- Right-to-left text (World-Ready basics): right-to-left runs are shaped right to left, lines are reordered by the Unicode Bidirectional Algorithm (matched against the reference implementation), Paragraph Direction (`type.para {direction}`, Paragraph panel, IDML ParagraphDirection, EPUB `dir`). Digits (`digits`: Default, Arabic, Hindi, Farsi, Native by language; Character panel for right-to-left text; IDML DigitsType) draw 0–9 in another script. Kashidas (`kashidas` paragraph attribute, on by default; IDML Kashidas): justified Arabic lines stretch at one join per word (after seen/sad when possible, never inside lam–alef) with a drawn tatweel before word spaces widen. Carets follow the drawing: the caret before a right-to-left glyph sits at its right edge, arrow keys move as drawn (by words in the line's direction), clicks find the nearest drawn caret position and selections highlight the selected glyphs. Binding: Right to Left (Document Setup, `layout.documentSetup {binding}`, IDML PageBinding) makes page 1 a left page and lays spreads out right to left.
+- Right-to-left text (World-Ready basics): right-to-left runs are shaped right to left, lines are reordered by the Unicode Bidirectional Algorithm (matched against the reference implementation), Paragraph Direction (`type.para {direction}`, Paragraph panel, IDML ParagraphDirection, EPUB `dir`). Digits (`digits`: Default, Arabic, Hindi, Farsi, Native by language; Character panel for right-to-left text; IDML DigitsType) draw 0–9 in another script. Kashidas (`kashidas` paragraph attribute, on by default): justified Arabic lines stretch at one join per word (after seen/sad when possible, never inside lam–alef) with a drawn tatweel before word spaces widen. Carets follow the drawing: the caret before a right-to-left glyph sits at its right edge, arrow keys move as drawn (by words in the line's direction), clicks find the nearest drawn caret position and selections highlight the selected glyphs. Binding: Right to Left (Document Setup, `layout.documentSetup {binding}`, IDML PageBinding) makes page 1 a left page and lays spreads out right to left.
 - Interface language (Edit ▸ Interface Language, `app.language`): German, French, Spanish, Italian, Japanese, Simplified Chinese and Arabic menu titles, common menu items and panel names (our own translations). Common dialog, panel and tooltip labels are also localized, with English fallback for untranslated strings. Arabic translations cover every key in the shared interface translation table, including menu commands and utility labels. The Type menu's Story Direction, Horizontal/Vertical, Tate-Chu-Yoko, Ruby… and Kenten are translated too. Arabic labels use Unicode bidi run ordering and contextual shaping; welcome and new-document form layouts follow RTL direction independently of document binding. CJK and Arabic glyphs come from [craft-fonts](https://github.com/storytold/craft-fonts) when built with `CRAFT_FONTS_DIR` (all releases): BIZ UDPGothic and Noto Sans CJK SC for the UI (Chinese forms first in the Chinese interface), Noto Sans Arabic, and Mincho for Japanese documents (the web build embeds BIZ UDPGothic only); otherwise from system fonts. Ukrainian covers all 1,430 existing catalog keys, including publishing dialogs and built-in names, with persisted selection, grammatical count captions, English fallback and bundled Cyrillic UI glyph coverage.
 - Page transitions (`page.transition/transitions`, Page Transitions panel): twelve transition types with speed and direction per spread, written into exported PDFs as `/Trans` entries through an incremental update.
 - PDF/X-4 export (`file.exportPdf {standard: "x4"}`): an output intent with our own Generic CMYK ICC profile (lut16 tables generated from the parametric press model), GTS_PDFXVersion in Info and XMP, `pdf:Trapped` in XMP as in Info, RGB images without a profile tagged sRGB, no image interpolation (none in PDF/A either), and built-in PDF/X-4 checks reported as warnings. qpdf finds no errors in the result.
@@ -179,51 +430,19 @@ DesignCraft aims at full Adobe InDesign parity — and to be better: faster, ope
 - MCP server (`designcraft-cli mcp [--connect PORT]`, docs/mcp.md): headless engine or the running app; commands, batch, document/story inspection, page renders as images, window screenshots, pointer/keyboard/dialog input.
 - Web build (`apps/designcraft-web`, trunk): the same UI on WebGPU with a WebGL2 fallback; open/place via the browser file picker or drag-and-drop, save/export as downloads.
 
-**Next (in order):** books · New Window / split view · Ink Manager and Separations Preview · XML structure, tags and export · buttons and forms · PDF/X-4 output intent (needs krilla support) · EPS place.
+Task notes that headed ROADMAP.md:
 
-## How far from full parity (estimate, 2026-10-04)
+- FID1: PDF export normalizes mixed emitted gradient color spaces to RGB with an explicit warning; homogeneous device-space gradients retain their components. Linear/radial, midpoint, archival and print policies have synthetic regression coverage.
+- AR1.1: Kashida justification tests verify space fallback without Tatweel fonts using an isolated font database, while retaining elongation assertions when fonts support it.
+- AR1: Arabic IDML controls now retain character direction, kashida switches, diacritic offsets/forms, paragraph policy values and independent story/table directions. Shaping preserves joining context and script/language selection; paragraph-level bidi, contextual digit conversion, mark-safe elongation, RTL columns/tables and physical column insertion have regression coverage. Vendor-specific justification and diacritic presets remain explicit preflight warnings; see docs/arabic-typography.md.
+- CJK1: IDML composite fonts now retain character mappings and metrics; explicit aki, tsume, jidori, em alignment/leading, named/custom kinsoku boundaries, hanging punctuation, tate-chu-yoko offsets and kenten symbols flow through composition and IDML export. Automatic kerning no longer imports inactive numeric values as enormous manual spacing. Composite definitions are editable through commands with undo/cache invalidation. Mojikumi definitions are retained and unsupported spacing-table / push-in-push-out policies are reported by preflight. Full InDesign CJK composition parity, frame-grid layout and detailed ruby remain unfinished. Warichu sets the selected run in smaller lines inside the line after the line is broken.
 
-**Breadth: ~99% weighted** (P0 core 99%, P1 100%, P2 97%) over the 275 features of the InDesign catalogue, scored
-row by row in [docs/parity.md](docs/parity.md) (`cargo xtask parity` recomputes it). Many features scored done still
-lack some of InDesign's options or dialog details, so **overall parity including depth is about 83%**.
+## Revision history
 
-**Remaining work: about 170 wall-clock hours of a single Claude Opus 5.5 agent** (±30%), or roughly 60–85 hours with
-four agents in parallel on separate crates:
-
-| Work | Estimate |
-|---|---|
-| Open P0 (2: PDF/X-4 validation against a certified checker, PostScript interpretation for EPS) | 8 h |
-| Open P1 (none partial) | 0 h |
-| Open P2 (3 partial: localization breadth, INDD pages (not readable clean-room), in-app media playback) | 14 h |
-| Depth and pixel fidelity of every dialog, panel and menu against InDesign 2026 | 90 h |
-| Performance (incremental composition, GPU raster) and interchange hardening (IDML/PDF corpus) | 55 h |
-
-Basis: since the first estimate this effort landed about 45 arcs (from parent overrides, Preferences, Stroke panel,
-gradients and Pathfinder to table/cell styles, nested/GREP styles and Print) in roughly 14 hours on a heavily loaded
-machine — about 1–2 hours per catalogue row.
-
-## Agents: CLI and MCP
-
-Every command is reachable from `designcraft-cli` (`run`, `script` with `$N.path` result references, `app` for the
-running window, `describe`, `commands`), from MCP (`designcraft-cli mcp`, tools including `execute` and `batch` with the
-same references), and from the app's JSON control channel. See [docs/agents.md](docs/agents.md).
-
-## Milestones
-
-| # | Milestone | State |
+| Date | Change | Summary |
 |---|---|---|
-| M0 | Skeleton + vertical slice | ✅ |
-| M1 | Selection, transform, layers, pages, MCP | in progress |
-| M2 | Type I (Type tool, threading, Character/Paragraph, composer) | in progress |
-| M3 | Styles (nested/GREP, bullets, keeps, span columns) | started |
-| M4 | Color & effects | started |
-| M5 | Graphics & links | started |
-| M6 | Files & export (native, IDML, PDF, PNG/JPEG) | in progress (IDML ✅, PDF export) |
-| M7 | Long documents (sections, TOC, index, footnotes, books) | in progress (sections, TOC, text variables/running heads, hyperlinks, bookmarks, footnotes, cross-references, index) |
-| M8 | Tables | ✅ core (table/cell styles, rotation, diagonal lines pending) |
-| M9 | Performance (MT composition, tiles) | in progress (glyph path cache, bounded RTL label layout cache, culling, parallel compose 6.7× faster, perf harness) |
-| M10 | Find/Change, spelling, Preflight | in progress (Find/Change ✅, spelling ✅, Preflight) |
-| M11 | Layout power features (liquid/alternate layouts, data merge) | started (data merge phase 1, step & repeat, snippets) |
-| M12 | Interactive & digital (EPUB, HTML, interactive PDF) | started (EPUB, PDF links/bookmarks) |
-| M13 | Automation (scripts, batch) | |
-| M14 | 1.0 polish & packaging | |
+| 2026-10-10 | minor | Full number 42% → 47%: method aligned with the standard (plain weighted sum, the ×0.9 discount dropped), no new evidence; readiness table with hours for full, mainstream and essentials; beta distance 33 → 28 points |
+| 2026-10-10 | minor | Added mainstream practitioner (~42%) and essentials user (~54%) numbers with written weights and discounts and a user-evidence count; full number (42%) now written as 47.2% × 0.9, value unchanged |
+| 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate (manual threading missing); Type & text frames row updated |
+| 2026-10-10 | major | Created from ROADMAP.md's "How far from full parity" (2026-10-04) and "Working today"; full re-measure against InDesign 2026 21.6: menu coverage measured against InDesign 21.6's menu dump (69%) and the documented tree (75%), breadth set at ~80%, ready-for-real-work re-estimated 83% → 42% on user-reported evidence and the INDD gap; hours recalibrated from git history |
+| 2026-10-04 | major | (in ROADMAP.md) breadth 99% weighted over 275 rows, ~83% including depth, ~170 h remaining |
