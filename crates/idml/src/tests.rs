@@ -615,7 +615,10 @@ fn absent_item_and_document_attributes_take_indesign_defaults() {
     let cols = t.options.alt_cols.as_ref().unwrap();
     assert_eq!((fills(cols), cols.first), (want.clone(), 2));
     let banded = d.styles.table.iter().find(|s| s.name == "Banded").unwrap();
-    assert_eq!(fills(banded.alt_rows.as_ref().unwrap()), want);
+    // Table styles keep alternating fills as attributes; applied, unset ones take the defaults.
+    let mut banded_rows = None;
+    banded.row_fills.apply_to(&mut banded_rows);
+    assert_eq!(fills(banded_rows.as_ref().unwrap()), want);
     let c = t.cell(0, 0).unwrap();
     assert_eq!((c.insets, c.vj, c.fill.as_str()), ([4.0; 4], VerticalJustification::Top, "[None]"));
     for e in &c.strokes {

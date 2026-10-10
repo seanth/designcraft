@@ -2161,8 +2161,15 @@ impl<'r> Importer<'r> {
                     }
                 };
                 // Options the frame doesn't set come from its object style chain.
-                let prefs: Vec<&El> = std::iter::once(e).chain(self.object_style_chain(e)).filter_map(|s| s.find("TextFramePreference")).collect();
-                let mut options = self.frame_options(&prefs);
+                // The chain borrows the importer, so the column rule swatch resolves after it.
+                let (mut options, rule_color) = {
+                    let prefs: Vec<&El> =
+                        std::iter::once(e).chain(self.object_style_chain(e)).filter_map(|s| s.find("TextFramePreference")).collect();
+                    (text_frame_options(&prefs), Prefs(&prefs).get("ColumnRuleStrokeColor").map(str::to_string))
+                };
+                if let Some(r) = rule_color {
+                    options.column_rule_color = self.swatch_ref(&r);
+                }
                 if let Some(g) = e.find("BaselineFrameGridOption")
                     && g.get("UseCustomBaselineFrameGrid") == Some("true")
                 {
