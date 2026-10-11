@@ -285,6 +285,10 @@ pub struct UiState {
     pub dialog: Option<dialogs::Dialog>,
     #[serde(skip)]
     pub palette: Option<String>,
+    /// Paste without Formatting was chosen from the native menu bar while typing: the clipboard
+    /// text the integration answers with is pasted without formatting (Shift may not be held).
+    #[serde(skip)]
+    pub paste_plain: bool,
     #[serde(skip)]
     pub flyout: Option<usize>,
 }
@@ -361,6 +365,7 @@ impl Default for UiState {
             status: String::new(),
             dialog: None,
             palette: None,
+            paste_plain: false,
             flyout: None,
         }
     }
