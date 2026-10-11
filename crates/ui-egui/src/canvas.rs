@@ -1455,8 +1455,9 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
             }
             egui::Event::Paste(t) if wants_text => {
                 // Formatted when the system clipboard still holds what was copied here;
-                // Shift (⇧⌘V) pastes without formatting.
-                let plain = ui.input(|i| i.modifiers.shift);
+                // Shift (⇧⌘V), or Paste without Formatting chosen from the native menu bar,
+                // pastes without formatting.
+                let plain = ui.input(|i| i.modifiers.shift) | std::mem::take(&mut app.ui.paste_plain);
                 let id = if plain { "edit.pasteWithoutFormatting" } else { "edit.paste" };
                 let _ = app.run(id, json!({"text": t}));
             }

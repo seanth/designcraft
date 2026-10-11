@@ -1934,6 +1934,15 @@ pub fn activate_native(app: &mut DesignApp, ctx: &egui::Context, id: &str, param
     // The canvas text editor is not an egui TextEdit, so its clipboard events must pass through
     // egui for the desktop integration to read/write the macOS clipboard.
     if params.is_null() && app.session.wants_text() && matches!(id, "edit.copy" | "edit.cut" | "edit.paste") && forward_to_text_edit(app, ctx, id) {
+        // A plain Paste after a Paste without Formatting that got no clipboard text is formatted.
+        app.ui.paste_plain = false;
+        return;
+    }
+    // Paste without Formatting needs the clipboard text too; the paste it answers with is plain.
+    if params.is_null() && app.session.wants_text() && id == "edit.pasteWithoutFormatting" {
+        app.ui.paste_plain = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        ctx.request_repaint();
         return;
     }
     activate(app, id, params);
@@ -2986,6 +2995,30 @@ mod tests {
         assert!(commands.contains(&egui::ViewportCommand::RequestPaste), "{commands:?}");
         native_frame(&mut app, &ctx, vec![egui::Event::Paste("world".into())], None);
         assert_eq!(app.session.active().unwrap().doc.story(story).unwrap().text, "world");
+    }
+
+    /// Paste without Formatting from the native menu bar (⇧⌘V, or chosen with the mouse) reads the
+    /// system clipboard too, and the paste it answers with is plain even without Shift held.
+    #[test]
+    fn native_paste_without_formatting_uses_the_system_clipboard_for_canvas_text() {
+        let ctx = egui::Context::default();
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.session.execute("file.new", &json!({})).unwrap();
+        app.session.execute("frame.create", &json!({"rect": [36, 36, 200, 200], "content": "text", "text": "hello"})).unwrap();
+        let story = *app.session.active().unwrap().doc.stories.keys().next().unwrap();
+        app.select_tool("type");
+        app.run("text.select", json!({"story": story.0, "anchor": 0, "focus": 5})).unwrap();
+        for _ in 0..3 {
+            native_frame(&mut app, &ctx, vec![], None);
+        }
+        // Nothing was copied in DesignCraft: the text comes from another app.
+        let paste = native_frame(&mut app, &ctx, vec![], Some("edit.pasteWithoutFormatting"));
+        let commands = &paste.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::RequestPaste), "{commands:?}");
+        assert!(app.ui.paste_plain);
+        native_frame(&mut app, &ctx, vec![egui::Event::Paste("from TextEdit".into())], None);
+        assert_eq!(app.session.active().unwrap().doc.story(story).unwrap().text, "from TextEdit");
+        assert!(!app.ui.paste_plain, "the next paste is formatted again");
     }
 
     #[test]
