@@ -4,7 +4,7 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-12. Based on upstream `main` at `f70f93d`.
+Last updated: 2026-10-12. Based on upstream `main` at `835edae`.
 
 ## How the branches fit together
 
@@ -16,10 +16,11 @@ Last updated: 2026-10-12. Based on upstream `main` at `f70f93d`.
 | `drop-cap-point-size` | aiongg's `feat/layout-parity` (#83) + the point-size fix only, for a PR to aiongg. |
 | `macos-open-documents` | Upstream `main` + Finder/Dock opening, for a PR to storytold. |
 | `header-fixes` | Upstream `main` + #301 + #106's fit commit + the running-header fix. |
-| `running-header-page-index` | Upstream `main` + the running-header fix only, for a PR to storytold. |
+| `running-header-page-index` | Merged upstream as #523 (`a21e8db`); safe to delete. |
 | `paste-without-formatting` | #349 + the Paste without Formatting fix, for the #349 author. |
 | `click-selection` | Upstream `main` + #347 + 4- and 5-click selection and the multi-click release fix. |
 | `font-rescan` | Upstream `main` + #315 + the font rescan when the window regains focus. |
+| `small-frame-wrap` | Upstream `main` + the fix for small frames (tombstones) beside text wrap. |
 | `main-2026-10-10` | Archive of the fork's old `main` (superseded history; safe to delete). |
 
 Each fix lives on its own branch, based on upstream `main` (or on the PR it extends), and is
@@ -47,11 +48,17 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 | Drop caps scale with their point size | `drop-cap-point-size` (`732b6dc`); in `personal` as `9bf9f74` | #83 sized every cap the same whatever its point size. InDesign scales by cap size ÷ body size, keeping the baseline (checked against an InDesign capture: 2.04× vs 2.03× the line gap). The cap's highlight and caret cover a cap that rises above the line. | For a PR into aiongg's `feat/layout-parity` (#83). |
 | Table-style defaults test reads `row_fills` | in `personal` via `drop-caps` (`a3530ff`) | #83's test broke after upstream changed how table styles store alternating fills | Mentioned to aiongg; needed when #83 is merged with current `main`. |
 | macOS: open documents from Finder and the Dock | `macos-open-documents` (`0a695d4`, `0d46b57`) | [#211](https://github.com/storytold/designcraft/issues/211): double-click, drop on the app icon and Open With didn't open files | **Waiting on a maintainer decision:** it needs `unsafe` (CLAUDE.md forbids it; see [#259](https://github.com/storytold/designcraft/issues/259)). The `unsafe` is confined to one macOS-only module. Also check [#417](https://github.com/storytold/designcraft/pull/417), which claims #211 too. |
-| Parent-page running headers by page index | `running-header-page-index` (`f23fa33`, `5898c08`) | Running headers were empty on pages whose page number repeats an earlier one (two sections both numbered from 1). `5898c08` keeps parent-page page numbers current after renumbering sections (aiongg's review). | [#523](https://github.com/storytold/designcraft/pull/523), open. Needs #301 for IDML files. |
 | Keep-lines test expectations | `ce4a3bc` (`personal` only) | #83's two Keep Lines Together tests expect a 6/4 split; with #106's fit rule it is 7/3 | Whichever of #83 and #106 lands second upstream will hit this. |
 | Paste without Formatting reads the system clipboard | `paste-without-formatting` (`3838e59`); in `personal` as `0014059` | ⇧⌘V (or the menu item) from another app still failed after #349 | Offer to the #349 author as a follow-up. |
 | Four clicks select the paragraph, five the story; multi-clicks keep their selection | `click-selection` (`4f2bd68`, on top of #347) | InDesign's 1–5 click selection (checked in InDesign). Also fixes a bug in #347: the third click's release turned the line selection back into a caret (it was taken for a click inside the selected word). egui counts at most 3 clicks, so the canvas counts the series itself. | PR to storytold to open (or offer to the #347 author); fixes #546. |
+| Small single-character frames (tombstones) are set beside text wrap | `small-frame-wrap` (`0635dea`) | A one-character frame (an article's closing tombstone: a 7.6 pt Noto Emoji symbol in a 10.5 pt box) was overset whenever its spread had any text-wrap object: every frame took every wrap object on the spread, and no gap under 1.5 em of the paragraph's size was used, even with nothing wrapping. Now only overlapping objects wrap a frame, and the minimum only applies to gaps a wrap cut. On the Samhain IDML the 12 tombstones are set and nothing else changes. | PR to storytold to open; probably also fixes [#476](https://github.com/storytold/designcraft/issues/476). |
 | Fonts installed while running are found when the window regains focus | `font-rescan` (`55f39ad`, on top of #315) | [#547](https://github.com/storytold/designcraft/issues/547), [#328](https://github.com/storytold/designcraft/issues/328): a font installed while DesignCraft ran needed a restart. A background rescan on focus reuses unchanged files; text is composed again only when the fonts actually changed. | PR to storytold to open; fixes #547. Complements #443 (fonts activated by font managers on macOS). |
+
+## Merged upstream (no longer needed here)
+
+| Item | Upstream |
+|---|---|
+| Parent-page running headers by page index (page name in the cache signature) | [#523](https://github.com/storytold/designcraft/pull/523), merged 2026-10-12 as `a21e8db` |
 
 ## Problems found but not fixed
 
