@@ -41,7 +41,7 @@ impl Tool for TypeTool {
 
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         match ev.kind {
-            PointerKind::Down | PointerKind::DoubleClick | PointerKind::TripleClick => {
+            PointerKind::Down | PointerKind::DoubleClick | PointerKind::TripleClick | PointerKind::QuadrupleClick | PointerKind::QuintupleClick => {
                 self.start = Some(ev.pos);
                 self.drawing = false;
                 self.selecting = None;
@@ -60,6 +60,8 @@ impl Tool for TypeTool {
                     let cmd = match ev.kind {
                         PointerKind::DoubleClick => "text.selectWord",
                         PointerKind::TripleClick => "text.selectLine",
+                        PointerKind::QuadrupleClick => "text.selectParagraph",
+                        PointerKind::QuintupleClick => "text.selectStory",
                         _ if ev.mods.shift => "text.extendTo",
                         _ => "text.placeCaret",
                     };

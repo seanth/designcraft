@@ -1433,10 +1433,23 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
         // released, so the upgrade event fires here (not on the matching `pressed` above) and
         // right before `Up`, which lets the Down this release matches re-derive the final
         // word/line selection.
-        if triple {
-            events.push(PointerEvent { kind: PointerKind::TripleClick, pos: pos(p), mods: m });
-        } else if dbl {
-            events.push(PointerEvent { kind: PointerKind::DoubleClick, pos: pos(p), mods: m });
+        // egui counts at most 3, so the count across a longer series (4: paragraph, 5: story,
+        // as in InDesign) is kept here.
+        let count_id = egui::Id::new(("canvas_click_count", app.pane));
+        let previous: u32 = ui.data(|d| d.get_temp(count_id)).unwrap_or(0);
+        let n = designcraft_tools::click_count(
+            previous,
+            if triple {
+                3
+            } else if dbl {
+                2
+            } else {
+                1
+            },
+        );
+        ui.data_mut(|d| d.insert_temp(count_id, n));
+        if let Some(kind) = PointerKind::for_clicks(n) {
+            events.push(PointerEvent { kind, pos: pos(p), mods: m });
         }
         events.push(PointerEvent { kind: PointerKind::Up, pos: pos(p), mods: m });
         down = false;

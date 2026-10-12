@@ -55,6 +55,35 @@ pub enum PointerKind {
     Move,
     DoubleClick,
     TripleClick,
+    /// Four clicks in a row (the Type tool selects the paragraph).
+    QuadrupleClick,
+    /// Five clicks in a row (the Type tool selects the story).
+    QuintupleClick,
+}
+
+impl PointerKind {
+    /// The multi-click event for the `n`th click in a row: none for a single click, five and more
+    /// clicks are a quintuple click.
+    pub fn for_clicks(n: u32) -> Option<PointerKind> {
+        match n {
+            0 | 1 => None,
+            2 => Some(PointerKind::DoubleClick),
+            3 => Some(PointerKind::TripleClick),
+            4 => Some(PointerKind::QuadrupleClick),
+            _ => Some(PointerKind::QuintupleClick),
+        }
+    }
+}
+
+/// How many clicks in a row a click ends, given the previous click's count and the windowing
+/// library's own count (egui counts 1, 2 or 3, and reports later clicks in a quick series as
+/// 3): a click that continues a series (2 or 3) is one more than the previous click, at most 5.
+pub fn click_count(previous: u32, reported: u32) -> u32 {
+    match reported {
+        0 | 1 => 1,
+        2 => 2,
+        _ => previous.saturating_add(1).clamp(3, 5),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
