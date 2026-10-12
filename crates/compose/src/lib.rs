@@ -2274,8 +2274,8 @@ fn wrap_slot(f: &FrameSpec, col: Rect, baseline: f64, asc: f64, desc: f64, jump:
 
 /// Widest free horizontal interval of `col` in the band, or None if blocked. A gap a wrap object
 /// cuts narrower than 1.5 em of `size` is skipped (a sliver beside the object); when no object
-/// reaches the band the whole column is free, however narrow (a one-character frame such as an
-/// article's closing tombstone).
+/// reaches the column in the band the whole column is free, however narrow (a one-character frame
+/// such as an article's closing tombstone, or a narrow column beside another that wraps).
 fn free_slot(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64) -> Option<(f64, f64)> {
     let mut free = vec![(col.x0, col.x1)];
     let mut cut = false;
@@ -2285,7 +2285,9 @@ fn free_slot(f: &FrameSpec, col: Rect, y0: f64, y1: f64, size: f64) -> Option<(f
         match ex.mode {
             WrapMode::JumpToNextColumn if y1 > r.y0 && r.x0 < col.x1 && r.x1 > col.x0 => return None,
             WrapMode::BoundingBox | WrapMode::Contour if overlaps_band => {
-                cut = true;
+                // Held to the minimum width only when the object reaches this column: one beside
+                // another column of the frame leaves this one whole, however narrow.
+                cut |= r.x0 < col.x1 && r.x1 > col.x0;
                 let mut next = Vec::new();
                 for (a, b) in free {
                     if r.x1 <= a || r.x0 >= b {
