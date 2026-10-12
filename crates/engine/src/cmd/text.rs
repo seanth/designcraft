@@ -23,12 +23,44 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "text.extendTo", "Extend Text Selection", [], None, "{frame, point}", has_doc, |s, p| place(s, p, true)),
         cmd!(noundo "text.selectWord", "Select Word", [], None, "{frame, point}", has_doc, |s, p| {
-            place(s, p, false)?;
+            caret_at_point(s, p)?;
             let st = s.doc_mut()?;
             let Some(t) = st.selection.text else { return ok() };
             let text = &st.doc.text_story(t.story, t.cell).map(|x| x.text.clone()).unwrap_or_default();
             let (a, b) = word_bounds(text, t.focus);
             st.selection.text = Some(TextSel { anchor: a, focus: b, ..t });
+            ok()
+        }),
+        cmd!(noundo "text.selectLine", "Select Line", [], None, "{frame, point}", has_doc, |s, p| {
+            caret_at_point(s, p)?;
+            let st = s.doc()?;
+            let Some(t) = st.selection.text else { return ok() };
+            let cs = s.cache.get(&st.doc, t.story, None);
+            let cs = match t.cell {
+                Some(c) if c.footnote_id().is_some() => compose::find_note(&cs, c.row as u64).map(|(_, n)| n.text.clone()).unwrap_or(cs),
+                Some(c) => compose::find_cell(&cs, c.table, c.row, c.col).map(|(_, _, pc)| pc.text.clone()).unwrap_or(cs),
+                None => cs,
+            };
+            let (a, b) = line_of(&cs, t.focus).unwrap_or((t.focus, t.focus));
+            let stm = s.doc_mut()?;
+            stm.selection.text = Some(TextSel { anchor: a, focus: b, ..t });
+            ok()
+        }),
+        cmd!(noundo "text.selectParagraph", "Select Paragraph", [], None, "{frame, point} — the paragraph there, with its paragraph return", has_doc, |s, p| {
+            caret_at_point(s, p)?;
+            let st = s.doc_mut()?;
+            let Some(t) = st.selection.text else { return ok() };
+            let Some(story) = st.doc.text_story(t.story, t.cell) else { return ok() };
+            let (a, b) = paragraph_bounds(&story.text, t.focus);
+            st.selection.text = Some(TextSel { anchor: a, focus: b, ..t });
+            ok()
+        }),
+        cmd!(noundo "text.selectStory", "Select Story", [], None, "{frame, point} — all the text of the story (or the table cell or note) there", has_doc, |s, p| {
+            caret_at_point(s, p)?;
+            let st = s.doc_mut()?;
+            let Some(t) = st.selection.text else { return ok() };
+            let len = st.doc.text_story(t.story, t.cell).map_or(0, |x| x.text.len());
+            st.selection.text = Some(TextSel { anchor: 0, focus: len, ..t });
             ok()
         }),
         cmd!(noundo "text.select", "Select Text", [], None, "{story, anchor, focus} (UTF-8 byte offsets into the story text, as find.find reports them: á or — counts 2 or 3)", has_doc, |s, p| {
@@ -716,6 +748,26 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
     stm.selection.text = Some(if extend { TextSel { focus: new, ..t } } else { TextSel { anchor: new, focus: new, ..t } });
     stm.revision += 1;
     Ok(json!({"pos": new}))
+}
+
+/// Puts the caret where a multi-click (double to quintuple) lands, before it selects a word, line,
+/// paragraph or story there. Its press was inside the previous click's selection, which made it a
+/// possible drag of that text; it is a selection instead, so the release keeps it.
+fn caret_at_point(s: &mut Session, p: &Value) -> Result<()> {
+    s.text_drag = false;
+    s.doc_mut()?.selection.text = None;
+    place(s, p, false)?;
+    s.text_drag = false;
+    Ok(())
+}
+
+/// The paragraph around byte `pos` of `text`: from after the previous paragraph return through
+/// its own return (none after the last paragraph).
+fn paragraph_bounds(text: &str, pos: usize) -> (usize, usize) {
+    let pos = floor_char_boundary(text, pos.min(text.len()));
+    let start = text.get(..pos).and_then(|t| t.rfind('\n')).map_or(0, |i| i + 1);
+    let end = text.get(pos..).and_then(|t| t.find('\n')).map_or(text.len(), |i| pos + i + 1);
+    (start, end)
 }
 
 fn line_of(cs: &compose::ComposedStory, pos: usize) -> Option<(usize, usize)> {
@@ -1881,5 +1933,128 @@ mod story_query_contract_tests {
         assert_eq!(s.execute("story.get", &json!({"frame":f["id"]})).unwrap()["text"], "");
         s.execute("text.select", &json!({"story":f["story"],"anchor":0})).unwrap();
         assert_eq!(s.execute("story.get", &json!({})).unwrap()["text"], "");
+    }
+}
+
+#[cfg(test)]
+mod double_triple_click_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// Double-click (`text.selectWord`) selects the clicked word; triple-click
+    /// (`text.selectLine`) selects the whole composed line.
+    #[test]
+    fn multi_click_selections_survive_the_release() {
+        // What the Type tool sends for 1–5 clicks in a row at one point: each press places the
+        // caret (or, inside the selection, starts a possible drag), each release after the first
+        // selects a unit, and the release ends the press. The later presses land inside the
+        // previous click's selection; the release must not turn them back into a caret.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let text = "First paragraph that wraps across several lines here\nSecond one";
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 200, 400], "content": "text", "text": text})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        let b = text.find("across").unwrap() + 2;
+        let point = {
+            let d = &s.doc().unwrap().doc;
+            let cs = designcraft_compose::compose_story(d, designcraft_doc::StoryId(sid), &Default::default());
+            let (l, g) = cs.frames[0].lines.iter().find_map(|l| l.glyphs.iter().find(|g| g.byte == b).map(|g| (l, g))).unwrap();
+            json!([g.x + g.adv * 0.25, l.baseline - 3.0])
+        };
+        let at = json!({"frame": fid, "point": point});
+        let release = json!({"frame": fid, "point": point, "moved": false});
+        let selected = |s: &Session| {
+            let t = s.doc().unwrap().selection.text.unwrap();
+            text[t.anchor.min(t.focus)..t.anchor.max(t.focus)].to_string()
+        };
+        s.execute("text.placeCaret", &at).unwrap();
+        s.execute("text.release", &release).unwrap();
+        let mut got = Vec::new();
+        for cmd in ["text.selectWord", "text.selectLine", "text.selectParagraph", "text.selectStory"] {
+            s.execute("text.placeCaret", &at).unwrap();
+            s.execute(cmd, &at).unwrap();
+            s.execute("text.release", &release).unwrap();
+            got.push(selected(&s));
+        }
+        assert_eq!(got[0], "across");
+        assert!(got[1].contains("across") && got[1].len() > "across".len() && !got[1].contains('\n'), "a line: {:?}", got[1]);
+        assert_eq!(got[2], "First paragraph that wraps across several lines here\n");
+        assert_eq!(got[3], text);
+    }
+
+    #[test]
+    fn select_paragraph_and_select_story() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        // A narrow frame: the first paragraph wraps onto several lines.
+        let text = "First paragraph that wraps across several lines here\nSecond one\nThird";
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 200, 400], "content": "text", "text": text})).unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        let at = |s: &Session, b: usize| {
+            let d = &s.doc().unwrap().doc;
+            let cs = designcraft_compose::compose_story(d, designcraft_doc::StoryId(sid), &Default::default());
+            let (l, g) = cs.frames[0].lines.iter().find_map(|l| l.glyphs.iter().find(|g| g.byte == b).map(|g| (l, g))).unwrap();
+            json!([g.x + g.adv * 0.25, l.baseline - 3.0])
+        };
+        let selected = |s: &Session| {
+            let t = s.doc().unwrap().selection.text.unwrap();
+            text[t.anchor.min(t.focus)..t.anchor.max(t.focus)].to_string()
+        };
+        let lines = designcraft_compose::compose_story(&s.doc().unwrap().doc, designcraft_doc::StoryId(sid), &Default::default()).frames[0]
+            .lines
+            .iter()
+            .filter(|l| l.para == 0)
+            .count();
+        assert!(lines > 1, "the first paragraph wraps");
+
+        // Four clicks on a later line of the first paragraph select all of it, with its return.
+        let b = text.find("lines").unwrap() + 1;
+        s.execute("text.selectParagraph", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        assert_eq!(selected(&s), "First paragraph that wraps across several lines here\n");
+        // The last paragraph has no return.
+        let b = text.find("Third").unwrap() + 1;
+        s.execute("text.selectParagraph", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        assert_eq!(selected(&s), "Third");
+        // Five clicks select the whole story.
+        let b = text.find("Second").unwrap() + 1;
+        s.execute("text.selectStory", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        assert_eq!(selected(&s), text);
+    }
+
+    #[test]
+    fn select_word_and_select_line() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s
+            .execute("frame.create", &json!({"rect": [72, 72, 500, 200], "content": "text", "text": "Hello brave world\nSecond line here"}))
+            .unwrap();
+        let (fid, sid) = (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap());
+        // Spread point of the glyph at byte `b`.
+        let at = |s: &Session, b: usize| {
+            let d = &s.doc().unwrap().doc;
+            let cs = designcraft_compose::compose_story(d, designcraft_doc::StoryId(sid), &Default::default());
+            let (l, g) = cs.frames[0].lines.iter().find_map(|l| l.glyphs.iter().find(|g| g.byte == b).map(|g| (l, g))).unwrap();
+            json!([g.x + g.adv * 0.25, l.baseline - 3.0])
+        };
+        let text = s.doc().unwrap().doc.story(designcraft_doc::StoryId(sid)).unwrap().text.clone();
+
+        // Double-click inside "brave" selects just that word.
+        let b = text.find("brave").unwrap() + 1;
+        s.execute("text.selectWord", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        let t = s.doc().unwrap().selection.text.unwrap();
+        assert_eq!(&text[t.anchor.min(t.focus)..t.anchor.max(t.focus)], "brave");
+
+        // Triple-click anywhere on the first line selects the whole line.
+        let b = text.find("world").unwrap() + 1;
+        s.execute("text.selectLine", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        let t = s.doc().unwrap().selection.text.unwrap();
+        assert_eq!(&text[t.anchor.min(t.focus)..t.anchor.max(t.focus)], "Hello brave world");
+
+        // Triple-click on the second line selects only that line.
+        let b = text.find("Second").unwrap() + 2;
+        s.execute("text.selectLine", &json!({"frame": fid, "point": at(&s, b)})).unwrap();
+        let t = s.doc().unwrap().selection.text.unwrap();
+        assert_eq!(&text[t.anchor.min(t.focus)..t.anchor.max(t.focus)], "Second line here");
     }
 }

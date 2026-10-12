@@ -51,6 +51,87 @@ fn selection_click_and_marquee() {
 }
 
 #[test]
+fn selection_double_and_triple_click_enter_text_edit() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (fid, _) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 200.0, 200.0), lid, "x", ParaFormat::default()).unwrap();
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+    for kind in [PointerKind::DoubleClick, PointerKind::TripleClick] {
+        let mut t = create("selection");
+        let a = t.pointer(&cx, &PointerEvent::new(kind, 150.0, 150.0));
+        assert_eq!(
+            a,
+            vec![
+                Action::SwitchTool("type".into()),
+                Action::Exec("text.placeCaret".into(), serde_json::json!({"frame": fid.0, "point": [150.0, 150.0]})),
+            ]
+        );
+    }
+}
+
+#[test]
+fn type_tool_double_click_selects_word_triple_click_selects_line() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (fid, _) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 200.0, 200.0), lid, "x", ParaFormat::default()).unwrap();
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+
+    let mut t = create("type");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::DoubleClick, 150.0, 150.0));
+    assert_eq!(a, vec![Action::Exec("text.selectWord".into(), serde_json::json!({"frame": fid.0, "point": [150.0, 150.0]}))]);
+
+    let mut t = create("type");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::TripleClick, 150.0, 150.0));
+    assert_eq!(a, vec![Action::Exec("text.selectLine".into(), serde_json::json!({"frame": fid.0, "point": [150.0, 150.0]}))]);
+
+    // A plain single click still just places the caret.
+    let mut t = create("type");
+    let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 150.0));
+    assert_eq!(a, vec![Action::Exec("text.placeCaret".into(), serde_json::json!({"frame": fid.0, "point": [150.0, 150.0]}))]);
+}
+
+#[test]
+fn type_tool_four_clicks_select_paragraph_five_the_story() {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (fid, _) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 200.0, 200.0), lid, "x", ParaFormat::default()).unwrap();
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+    for (kind, cmd) in [(PointerKind::QuadrupleClick, "text.selectParagraph"), (PointerKind::QuintupleClick, "text.selectStory")] {
+        let mut t = create("type");
+        let a = t.pointer(&cx, &PointerEvent::new(kind, 150.0, 150.0));
+        assert_eq!(a, vec![Action::Exec(cmd.into(), serde_json::json!({"frame": fid.0, "point": [150.0, 150.0]}))]);
+    }
+}
+
+/// egui counts at most three clicks; a longer quick series keeps counting (as in InDesign: 4 select
+/// the paragraph, 5 the story) and a new series starts over.
+#[test]
+fn clicks_in_a_row_count_past_three() {
+    let mut n = 0;
+    let mut kinds = Vec::new();
+    for reported in [1, 2, 3, 3, 3, 3, 1, 2] {
+        n = crate::click_count(n, reported);
+        kinds.push((n, PointerKind::for_clicks(n)));
+    }
+    assert_eq!(
+        kinds,
+        [
+            (1, None),
+            (2, Some(PointerKind::DoubleClick)),
+            (3, Some(PointerKind::TripleClick)),
+            (4, Some(PointerKind::QuadrupleClick)),
+            (5, Some(PointerKind::QuintupleClick)),
+            (5, Some(PointerKind::QuintupleClick)),
+            (1, None),
+            (2, Some(PointerKind::DoubleClick)),
+        ]
+    );
+}
+
+#[test]
 fn resize_rect_modifiers() {
     let r = Rect::new(0.0, 0.0, 100.0, 50.0);
     assert_eq!(select::resize_rect(r, 4, designcraft_geom::Point::new(200.0, 80.0), Mods::default()), Rect::new(0.0, 0.0, 200.0, 80.0));
