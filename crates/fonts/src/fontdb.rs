@@ -2,7 +2,7 @@
 //! time a lookup needs them, native only), outline cache.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use kurbo::BezPath;
@@ -333,6 +333,10 @@ impl FontFace {
     }
 }
 
+/// A file's length and modification time.
+#[cfg(not(target_arch = "wasm32"))]
+type FileStamp = (u64, Option<std::time::SystemTime>);
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
 struct CatalogEntry {
@@ -369,6 +373,15 @@ pub struct FontDb {
     outlines: Mutex<HashMap<(u32, u32), Arc<BezPath>>>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
+    /// Each cataloged font file's (length, modification time) at the last scan: a rescan reuses
+    /// the catalog entries of the files that haven't changed instead of reading them again.
+    #[cfg(not(target_arch = "wasm32"))]
+    catalog_stamps: Mutex<HashMap<std::path::PathBuf, FileStamp>>,
+    /// Bumped whenever a scan changes the catalog (fonts installed or removed): what was composed
+    /// with the previous fonts may now resolve differently. See [`FontDb::catalog_generation`].
+    catalog_generation: AtomicU64,
+    /// A background rescan is running (see [`FontDb::rescan_in_background`]).
+    rescanning: AtomicBool,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     font_dirs: Vec<std::path::PathBuf>,
@@ -379,15 +392,26 @@ pub struct FontDb {
     /// System fallback state: enabled, and characters no system font covers.
     #[cfg(not(target_arch = "wasm32"))]
     sys: Mutex<SysFallback>,
+    /// Pause one fallback after copying catalog paths, with no database locks held.
+    #[cfg(all(test, target_os = "linux"))]
+    fallback_snapshot_hook: Mutex<Option<FallbackSnapshotHook>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct SysFallback {
     enabled: bool,
+    /// Rescan generation: an older in-flight lookup must not restore a cleared miss.
+    generation: u64,
     misses: std::collections::HashSet<char>,
     /// CJK chain families already looked up in the catalog (loaded, or not installed).
     chain_tried: std::collections::HashSet<&'static str>,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+struct FallbackSnapshotHook {
+    reached: std::sync::mpsc::SyncSender<()>,
+    resume: Arc<std::sync::Barrier>,
 }
 
 /// Families tried (when installed) for characters the loaded fonts lack: CJK, symbols, emoji.
@@ -898,11 +922,17 @@ impl FontDb {
             outlines: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            catalog_stamps: Mutex::new(HashMap::new()),
+            catalog_generation: AtomicU64::new(0),
+            rescanning: AtomicBool::new(false),
             font_dirs,
             #[cfg(not(target_arch = "wasm32"))]
             cataloged: std::sync::OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
+            #[cfg(all(test, target_os = "linux"))]
+            fallback_snapshot_hook: Mutex::new(None),
         }
     }
 
@@ -1021,6 +1051,42 @@ impl FontDb {
         }
     }
 
+    /// Scan the font folders again in the background (fonts installed or removed since the last
+    /// scan), unless a rescan is already running: the app calls this when its window regains focus,
+    /// as fonts are typically installed from another app. Unchanged files aren't read again; when
+    /// the fonts changed, [`FontDb::catalog_generation`] moves on. Before the first scan this starts
+    /// it (see [`FontDb::scan_in_background`]). A no-op on wasm.
+    pub fn rescan_in_background(&'static self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.cataloged.get().is_none() {
+                self.scan_in_background();
+                return;
+            }
+            if self.rescanning.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let spawned = std::thread::Builder::new().name("font-rescan".into()).spawn(move || {
+                self.load_system_fonts();
+                self.rescanning.store(false, Ordering::Release);
+            });
+            if spawned.is_err() {
+                self.rescanning.store(false, Ordering::Release);
+            }
+        }
+    }
+
+    /// Whether a background rescan is running.
+    pub fn is_rescanning(&self) -> bool {
+        self.rescanning.load(Ordering::Acquire)
+    }
+
+    /// Changes whenever a scan finds the installed fonts changed (and after the first scan):
+    /// compare it with the value seen when composing to know when to compose again.
+    pub fn catalog_generation(&self) -> u64 {
+        self.catalog_generation.load(Ordering::Acquire)
+    }
+
     /// Scan the font folders again (fonts installed or removed since), cataloging the faces
     /// found (native only). Font data is loaded when a cataloged family is first resolved.
     /// Returns the number of faces cataloged.
@@ -1029,11 +1095,26 @@ impl FontDb {
         // The first scan, or a rescan once it is done (never both at once).
         let mut first = None;
         self.cataloged.get_or_init(|| first = Some(self.scan_font_dirs()));
-        first.unwrap_or_else(|| self.scan_font_dirs())
+        let count = first.unwrap_or_else(|| self.scan_font_dirs());
+        // Retry characters and CJK chain families that newly installed fonts can now cover.
+        // Reset outside scan_font_dirs: a chain lookup can hold sys during the initial scan.
+        let mut sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+        sys.generation = sys.generation.wrapping_add(1);
+        sys.misses.clear();
+        sys.chain_tried.clear();
+        count
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn scan_font_dirs(&self) -> usize {
+        // The previous scan's entries by file, reused for files that haven't changed.
+        let old: Vec<CatalogEntry> = self.catalog.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut old_by_path: HashMap<&std::path::Path, Vec<&CatalogEntry>> = HashMap::new();
+        for c in &old {
+            old_by_path.entry(c.path.as_path()).or_default().push(c);
+        }
+        let old_stamps = std::mem::take(&mut *self.catalog_stamps.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut stamps = HashMap::new();
         let mut found = Vec::new();
         let mut stack = self.font_dirs.clone();
         // Each folder once, however links lead back to it.
@@ -1053,6 +1134,14 @@ impl FontDb {
                 if !matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) {
                     continue;
                 }
+                let stamp: Option<FileStamp> = std::fs::metadata(&p).ok().map(|m| (m.len(), m.modified().ok()));
+                if let Some(st) = stamp {
+                    stamps.insert(p.clone(), st);
+                    if old_stamps.get(&p) == Some(&st) {
+                        found.extend(old_by_path.get(p.as_path()).into_iter().flatten().map(|c| (*c).clone()));
+                        continue;
+                    }
+                }
                 for f in file_face_names(&p) {
                     found.push(CatalogEntry { family: f.family, style: f.style, path: p.clone(), group: f.group, native: f.native });
                 }
@@ -1060,7 +1149,18 @@ impl FontDb {
         }
         let n = found.len();
         log::debug!("cataloged {n} system font faces");
+        // The fonts changed: the families and styles cataloged, or the files they come from.
+        let key = |c: &CatalogEntry| (c.family.to_lowercase(), c.style.to_lowercase(), c.path.clone());
+        let mut before: Vec<_> = old.iter().map(key).collect();
+        let mut after: Vec<_> = found.iter().map(key).collect();
+        before.sort();
+        after.sort();
+        let changed = before != after || self.cataloged.get().is_none();
         *self.catalog.write().unwrap_or_else(|e| e.into_inner()) = found;
+        *self.catalog_stamps.lock().unwrap_or_else(|e| e.into_inner()) = stamps;
+        if changed {
+            self.catalog_generation.fetch_add(1, Ordering::AcqRel);
+        }
         n
     }
 
@@ -1229,12 +1329,13 @@ impl FontDb {
         if c.is_control() || c.is_whitespace() {
             return false;
         }
-        {
+        let generation = {
             let sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
             if !sys.enabled || sys.misses.contains(&c) {
                 return false;
             }
-        }
+            sys.generation
+        };
         let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
         for fam in SYSTEM_FALLBACKS {
@@ -1248,6 +1349,14 @@ impl FontDb {
         let mut paths: Vec<std::path::PathBuf> = self.catalog.read().unwrap_or_else(|e| e.into_inner()).iter().map(|e| e.path.clone()).collect();
         paths.sort();
         paths.dedup();
+        #[cfg(all(test, target_os = "linux"))]
+        {
+            let hook = self.fallback_snapshot_hook.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(hook) = hook {
+                let _ = hook.reached.send(());
+                hook.resume.wait();
+            }
+        }
         for p in paths {
             if std::fs::metadata(&p).map(|m| m.len() > 40 << 20).unwrap_or(true) {
                 continue;
@@ -1259,7 +1368,10 @@ impl FontDb {
                 return true;
             }
         }
-        self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.insert(c);
+        let mut sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+        if sys.generation == generation {
+            sys.misses.insert(c);
+        }
         false
     }
 
