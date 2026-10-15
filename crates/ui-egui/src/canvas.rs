@@ -164,6 +164,13 @@ pub fn drop_point(app: &DesignApp, screen: Option<Pos2>) -> Option<(SpreadRef, P
     layout.spread_at(Xf::new(rect, app.view()?).to_canvas(pos))
 }
 
+/// The spread under the view centre (a parent spread while parents are edited).
+pub fn current_spread(app: &DesignApp) -> Option<SpreadRef> {
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    Some(layout.slots.get(current_slot(app, &layout)?)?.spread)
+}
+
 /// Absolute page index under the view centre.
 pub fn current_page(app: &DesignApp) -> Option<usize> {
     let st = app.session.active()?;
