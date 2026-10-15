@@ -381,7 +381,6 @@ fn a_background_rescan_finds_a_font_installed_while_running() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-
 #[test]
 fn installed_and_loaded_fonts_are_found_by_postscript_name() {
     let dir = std::env::temp_dir().join(format!("dc-sysfonts-postscript-{}", std::process::id()));
