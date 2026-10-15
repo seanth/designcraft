@@ -4,7 +4,7 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-15. Based on upstream `main` at `a930276` (0.8.0 plus 415 commits of merged
+Last updated: 2026-10-15 (Save documents as setting added). Based on upstream `main` at `a930276` (0.8.0 plus 415 commits of merged
 community PRs).
 
 `personal` is rebuilt from upstream `main` whenever upstream merges something it carried (on
@@ -21,6 +21,7 @@ with a merge that keeps the new content, so `git pull` still works and nothing n
 | `macos-open-documents` | Upstream `main` + Finder/Dock opening, for a PR to storytold. |
 | `font-rescan` | Upstream `main` + #315 + the rescan when the window regains focus. |
 | `paste-without-formatting` | Upstream `main` (with #349) + our Paste without Formatting fix. Probably redundant; see below. |
+| `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). **Personal only**, not meant for upstream. |
 | `drop-cap-point-size` | Superseded by `drop-cap-size`. Safe to delete. |
 
 Other people's PRs (#369, #635, #301) have no branch here: `personal` merges them straight from
@@ -53,6 +54,20 @@ Cargo.lock commit for its crate's version; merge it into `personal` from there.
 | macOS: open documents from Finder and the Dock | `macos-open-documents` (`0a695d4`, `0d46b57`, lockfile `43c1f1b`) | [#211](https://github.com/storytold/designcraft/issues/211): double-click, drop on the app icon and Open With didn't open files. | **Waiting on a maintainer decision:** needs `unsafe` (see [#259](https://github.com/storytold/designcraft/issues/259)); confined to one macOS-only module. Sits next to upstream's cancelable Dock Quit hook; both run before the app starts. |
 | Fonts installed while running are found when the window regains focus | `font-rescan` (`55f39ad`) | [#547](https://github.com/storytold/designcraft/issues/547) (same as [#328](https://github.com/storytold/designcraft/issues/328)): a font installed while DesignCraft ran needed a restart. | PR to open; reference #328. |
 | Paste without Formatting reads the system clipboard | `paste-without-formatting` (`3838e59`) | ⇧⌘V from another app failed after #349. | **Probably redundant:** #349 and #84's clipboard code are both upstream now, and upstream reads the system clipboard for Paste without Formatting while typing. To decide: on plain upstream, copy text in TextEdit, then in a text frame press ⇧⌘V and also choose Edit › Paste without Formatting. If both paste plain text, delete the branch and drop it from here. |
+
+### Personal-only features (not for upstream)
+
+| Item | Branch / commit | What it does |
+|---|---|---|
+| Save documents as: DesignCraft or IDML | `save-format` (`7f209e2`) | Preferences › File Handling › Saving › **Save documents as**. With **InDesign Markup (.idml)** chosen: Save suggests `Title.idml` for a new document (a name typed without an extension gets `.idml`), and an opened `.idml` file is the document's file, so ⌘S writes IDML back to it instead of asking where to save. Save, Save As and Save a Copy write whatever format the file name says, so an old `.designcraft` file still saves as itself. IDML saves embed the images, so the file stands alone. With **DesignCraft (.designcraft)** chosen (the default), everything is as upstream. The choice is kept in `prefs.json` (`saveFormat`). |
+
+**What IDML can't hold** is lost on every IDML save, without a warning, by design of this setting.
+Known examples: placed Word/RTF/text files stay in the document but lose their link (#610), and
+anything newer than DesignCraft's IDML export (some paragraph and table settings still being added
+upstream). A layout that also lives in InDesign is unaffected; one that uses DesignCraft-only
+features should be checked after reopening.
+
+The web build is unchanged: its Save downloads a `.designcraft` file.
 
 ### Merge fixes
 
@@ -111,6 +126,9 @@ composer and table of contents in the IDML importer; a document gets both.
     only its row is highlighted.
   - With DesignCraft open, install a font in Font Book, switch back: the font is in the font menu.
   - A drop cap set larger than the body text is taller than one set at the body's size.
+  - Save documents as IDML: set it in Preferences › File Handling; open an `.idml`, edit, ⌘S, and
+    reopen it in DesignCraft (and in InDesign): the edit is there. A new document's ⌘S suggests
+    `Untitled-1.idml`.
 - **The web build** (`cargo xtask wasm`) wasn't run: this environment can't download the wasm
   toolchain.
 - Everything else passed on Linux, on `personal` and on each branch above separately: fmt,
