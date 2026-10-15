@@ -216,6 +216,36 @@ pub struct Prefs {
     /// Preferences › File Handling › Create Links When Placing Text Files: placed text files are
     /// linked (Links panel) unless `file.place` says otherwise.
     pub link_text_files: bool,
+    /// Preferences › File Handling › Save documents as: the format Save suggests for a new
+    /// document, and, as IDML, an opened `.idml` file is saved back to itself.
+    pub save_format: SaveFormat,
+}
+
+/// The format a document is saved in (Preferences › File Handling).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SaveFormat {
+    /// DesignCraft's own `.designcraft` package.
+    #[default]
+    Designcraft,
+    /// InDesign Markup (`.idml`), with the images embedded.
+    Idml,
+}
+
+impl SaveFormat {
+    /// The file extension, without its dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            SaveFormat::Designcraft => "designcraft",
+            SaveFormat::Idml => "idml",
+        }
+    }
+
+    /// The format a file at `path` is written in: IDML for a `.idml` name, else DesignCraft's own.
+    pub fn of_path(path: &str) -> SaveFormat {
+        let idml = std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("idml"));
+        if idml { SaveFormat::Idml } else { SaveFormat::Designcraft }
+    }
 }
 
 /// A starter autocorrect list (common English typing slips).
@@ -265,6 +295,7 @@ impl Default for Prefs {
             show_note_anchors: true,
             recovery_minutes: 0.5,
             link_text_files: false,
+            save_format: SaveFormat::Designcraft,
         }
     }
 }

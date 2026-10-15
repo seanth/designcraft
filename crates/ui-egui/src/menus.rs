@@ -899,9 +899,10 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             return run_ui(app, "app.saveDialog", p);
         }
         "app.saveDialog" => {
-            let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).unwrap_or_default();
+            let ext = app.session.prefs.save_format.extension();
+            let name = app.session.active().map(|d| format!("{}.{ext}", d.doc.title)).unwrap_or_default();
             if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
-                return Some(app.run("file.saveAs", json!({"path": path})));
+                return Some(app.run("file.saveAs", json!({"path": with_save_extension(&path, ext)})));
             }
             Ok(Value::Null)
         }
@@ -910,9 +911,10 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(Value::Null)
         }
         "app.saveCopyDialog" => {
-            let name = app.session.active().map(|d| format!("{} copy.designcraft", d.doc.title)).unwrap_or_default();
+            let ext = app.session.prefs.save_format.extension();
+            let name = app.session.active().map(|d| format!("{} copy.{ext}", d.doc.title)).unwrap_or_default();
             if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
-                return Some(app.run("file.saveACopy", json!({"path": path})));
+                return Some(app.run("file.saveACopy", json!({"path": with_save_extension(&path, ext)})));
             }
             Ok(Value::Null)
         }
@@ -2185,6 +2187,13 @@ fn clipped_submenu<'a, R>(
     clipped.interact_rect = response.interact_rect.intersect(clip);
     let inner = button.sub_menu.show(ui, &clipped, contents);
     (response, inner)
+}
+
+/// A path the save dialog returned, with `ext` (the Save documents as format) added when the name
+/// has no extension of its own: "Brochure" saves as "Brochure.idml". A name with one is kept as
+/// typed; its extension decides the format (see `file.save`).
+fn with_save_extension(path: &str, ext: &str) -> String {
+    if std::path::Path::new(path).extension().is_some() { path.to_string() } else { format!("{path}.{ext}") }
 }
 
 /// A native menu bar item was chosen (macOS): like [`activate`], except that the menu bar takes
@@ -4227,5 +4236,63 @@ mod tests {
         assert!(open, "hovering the visible portion still opens the submenu");
         let (_, Some((_, _, open))) = frame(500.0, vec![]) else { panic!("test menu remains open") };
         assert!(!open, "an open submenu closes when its row becomes fully clipped");
+    }
+}
+
+/// Preferences › File Handling › Save documents as.
+#[cfg(test)]
+mod save_format_tests {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+
+    use crate::DesignApp;
+
+    #[test]
+    fn choosing_idml_makes_save_suggest_and_write_idml() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"title": "Brochure"})).unwrap();
+        app.run("frame.create", json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Hello"})).unwrap();
+        // Preferences › File Handling: InDesign Markup.
+        app.run("app.preferences", json!({})).unwrap();
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!(d.fields["saveFormat"], "designcraft", "DesignCraft's own format by default");
+        d.fields.insert("saveFormat".into(), json!("idml"));
+        crate::dialogs::confirm(&mut app).unwrap();
+        assert_eq!(app.session.prefs.save_format, designcraft_engine::SaveFormat::Idml);
+        // Save: the dialog suggests a .idml name; a name typed without an extension gets .idml.
+        let dir = tempfile::tempdir().unwrap();
+        let typed = dir.path().join("Brochure").to_string_lossy().to_string();
+        let suggested = Arc::new(Mutex::new(String::new()));
+        let seen = suggested.clone();
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            *seen.lock().unwrap() = name.to_string();
+            Some(typed.clone())
+        }));
+        app.run("app.save", json!({})).unwrap();
+        assert_eq!(*suggested.lock().unwrap(), "Brochure.idml");
+        let path = dir.path().join("Brochure.idml");
+        assert!(designcraft_idml::is_idml(&std::fs::read(&path).unwrap()));
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(path.to_str().unwrap()));
+        // Back to DesignCraft's format: Save As suggests .designcraft again.
+        app.run("app.preferences", json!({})).unwrap();
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!(d.fields["saveFormat"], "idml", "the dialog shows the current choice");
+        d.fields.insert("saveFormat".into(), json!("designcraft"));
+        crate::dialogs::confirm(&mut app).unwrap();
+        let seen = suggested.clone();
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            *seen.lock().unwrap() = name.to_string();
+            None
+        }));
+        app.run("app.saveDialog", json!({})).unwrap();
+        assert_eq!(*suggested.lock().unwrap(), "Brochure.designcraft");
+    }
+
+    #[test]
+    fn a_typed_extension_is_kept() {
+        assert_eq!(super::with_save_extension("/a/Brochure", "idml"), "/a/Brochure.idml");
+        assert_eq!(super::with_save_extension("/a/Brochure.idml", "designcraft"), "/a/Brochure.idml");
+        assert_eq!(super::with_save_extension("/a/Brochure.designcraft", "idml"), "/a/Brochure.designcraft");
     }
 }
