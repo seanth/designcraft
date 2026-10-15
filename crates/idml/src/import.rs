@@ -83,8 +83,10 @@ pub fn import_idml_report(bytes: &[u8], read_link: &dyn Fn(&str) -> Option<Vec<u
         }
     }
     let mut im = Importer::new(read_link);
-    if let Some(m) = files.get("META-INF/metadata.xml") {
-        let m = String::from_utf8_lossy(m);
+    // The package's XMP dates, for the date text variables (#301). Optional: a metadata part that
+    // can't be read leaves the dates unset instead of failing the import.
+    if let Ok(Some(m)) = pkg.part("META-INF/metadata.xml") {
+        let m = String::from_utf8_lossy(&m);
         im.created = xmp_date(&m, "xmp:CreateDate");
         im.modified = xmp_date(&m, "xmp:ModifyDate");
     }
