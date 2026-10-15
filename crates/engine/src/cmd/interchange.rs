@@ -163,8 +163,13 @@ pub(crate) fn open_idml(s: &mut Session, p: &Value) -> Result<Value> {
         None => (None, 0, Vec::new()),
     };
     warnings.extend(font_warnings);
-    // Never save over the .idml with the native format: the document starts unsaved.
-    let mut st = DocState::new(d, None);
+    // Saving IDML (Preferences › File Handling): the document is that .idml file, and Save writes
+    // IDML back to it. Otherwise it starts unsaved, so the .idml is never overwritten.
+    let path = match s.prefs.save_format {
+        crate::SaveFormat::Idml => str_param(p, "path").filter(|_| str_param(p, "base64").is_none()).map(str::to_string),
+        crate::SaveFormat::Designcraft => None,
+    };
+    let mut st = DocState::new(d, path);
     st.fonts = fonts;
     let i = s.add_document(st);
     Ok(json!({"index": i, "documentFonts": faces, "warnings": warnings}))
