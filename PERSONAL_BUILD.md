@@ -16,9 +16,10 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the three branches below. |
+| `personal` | This build: upstream `main` + the four branches below. |
 | `drop-cap-size` | Upstream `main` + the drop cap point-size fix (one commit), for a PR to storytold. |
 | `font-rescan` | Upstream `main` + fonts installed while running are found when the window regains focus. Worth a PR to storytold (#547, #328). |
+| `idml-app-icon-drop` | Upstream `main` + `.idml` files can be dropped on the macOS app icon when InDesign is installed (one commit). Worth a PR to storytold (a gap in #417). |
 | `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). **Personal only.** |
 
 Each branch is based on upstream `main` and merged into `personal` from there. Never open an
@@ -35,6 +36,7 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 |---|---|---|---|
 | Drop caps scale with their point size | `drop-cap-size` (`54305b1`) | A drop cap comes out the same size whatever its point size. InDesign scales by cap size ÷ body size, keeping the baseline (checked against an InDesign capture). The cap's highlight and caret cover a cap that rises above the line. Its test fails on upstream and passes with the fix. | Not in upstream (checked 2026-10-16). PR to storytold to open. |
 | Fonts installed while running are found when the window regains focus | `font-rescan` (`55f39ad`, ported onto upstream's reworked scan in `0b32ed6`) | [#547](https://github.com/storytold/designcraft/issues/547) / [#328](https://github.com/storytold/designcraft/issues/328): a font installed while DesignCraft runs needs a restart. Upstream can rescan (`load_system_fonts`, with #315's retry of missing characters and #443's fonts activated by font managers), but nothing calls it while the app runs; its own `docs/gaps.md` still lists "reload when fonts change on disk (#328)". This branch rescans in the background when the window regains focus, reads only files whose size or date changed, and re-lays out text when the fonts actually changed. | PR to storytold to open; reference #328. |
+| `.idml` dropped on the macOS app icon opens | `idml-app-icon-drop` (`b09233a`) | Upstream's #417 declares `.idml` only by a type it imports. When InDesign is installed, its own exported type for `.idml` wins, so the declaration no longer matches: Finder refuses the drop on the app's icon and Open With leaves DesignCraft out, while Dock drops still work. Adds a second `CFBundleDocumentTypes` entry by extension (Viewer, Alternate), which matches whatever type the file has. Only `packaging/macos/Info.plist.in` changes; checked that it parses. | Not in upstream (checked 2026-10-16). PR to storytold to open. |
 
 ### Personal-only feature (not for upstream)
 
@@ -98,6 +100,9 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
     the edit is there. A new document's ⌘S suggests `Untitled-1.idml`.
   - Upstream's Finder/Dock opening (#417), which replaced ours: double-click an `.idml`, drop one
     on the Dock icon, Open With.
+  - `idml-app-icon-drop`: after installing the rebuilt app, launch it once so macOS re-reads its
+    file types; then dropping an `.idml` on the app's icon in Finder (or in Applications) opens it,
+    and Open With lists DesignCraft.
 - **The web build**: rebuild and repeat the 2026-10-15 browser check (Save documents as survives a
   reload; ⌘S downloads `.idml`), since upstream changed the download code underneath.
 - Everything else passed on Linux, on `personal` and on each branch above separately: fmt,
