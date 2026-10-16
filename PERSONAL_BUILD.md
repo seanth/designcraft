@@ -59,7 +59,7 @@ Cargo.lock commit for its crate's version; merge it into `personal` from there.
 
 | Item | Branch / commit | What it does |
 |---|---|---|
-| Save documents as: DesignCraft or IDML | `save-format` (`7f209e2`) | Preferences › File Handling › Saving › **Save documents as**. With **InDesign Markup (.idml)** chosen: Save suggests `Title.idml` for a new document (a name typed without an extension gets `.idml`), and an opened `.idml` file is the document's file, so ⌘S writes IDML back to it instead of asking where to save. Save, Save As and Save a Copy write whatever format the file name says, so an old `.designcraft` file still saves as itself. IDML saves embed the images, so the file stands alone. With **DesignCraft (.designcraft)** chosen (the default), everything is as upstream. The choice is kept in `prefs.json` (`saveFormat`). |
+| Save documents as: DesignCraft or IDML | `save-format` (`7f209e2`; web `2477a82`) | Preferences › File Handling › Saving › **Save documents as**. With **InDesign Markup (.idml)** chosen: Save suggests `Title.idml` for a new document (a name typed without an extension gets `.idml`), and an opened `.idml` file is the document's file, so ⌘S writes IDML back to it instead of asking where to save. Save, Save As and Save a Copy write whatever format the file name says, so an old `.designcraft` file still saves as itself. IDML saves embed the images, so the file stands alone. With **DesignCraft (.designcraft)** chosen (the default), everything is as upstream. The choice is kept in `prefs.json` (`saveFormat`). |
 
 **What IDML can't hold** is lost on every IDML save, without a warning, by design of this setting.
 Known examples: placed Word/RTF/text files stay in the document but lose their link (#610), and
@@ -67,7 +67,14 @@ anything newer than DesignCraft's IDML export (some paragraph and table settings
 upstream). A layout that also lives in InDesign is unaffected; one that uses DesignCraft-only
 features should be checked after reopening.
 
-The web build is unchanged: its Save downloads a `.designcraft` file.
+**In the web build** (`2477a82`), Save is a download: `Title.idml` (an IDML package) with
+InDesign Markup chosen, else `Title.designcraft`. A browser can't write back to the file it opened,
+so each Save is a new download. The web app now also keeps the Preferences dialog's settings in
+the browser's local storage, as the desktop app keeps `prefs.json`; before, every visit started
+from the defaults. A browser that refuses storage (some private modes) still starts from the
+defaults. **Untested in a browser:** the web build can't be compiled here. The download and the
+storage logic have native tests, and the browser storage calls were type-checked against the
+project's `web-sys` version; run `cargo xtask wasm` and try it once.
 
 ### Merge fixes
 
@@ -130,7 +137,8 @@ composer and table of contents in the IDML importer; a document gets both.
     reopen it in DesignCraft (and in InDesign): the edit is there. A new document's ⌘S suggests
     `Untitled-1.idml`.
 - **The web build** (`cargo xtask wasm`) wasn't run: this environment can't download the wasm
-  toolchain.
+  toolchain. In a browser, check: set Save documents as to InDesign Markup, reload the page, and
+  the setting is still there; ⌘S downloads `Untitled-1.idml`, which opens in DesignCraft again.
 - Everything else passed on Linux, on `personal` and on each branch above separately: fmt,
   clippy `-D warnings`, all workspace tests, `xtask layers` and `xtask assets`. On the Samhain IDML
   21 stories are overset (23 before today's upstream; 54 on upstream before #589) and no
