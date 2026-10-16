@@ -184,6 +184,38 @@ fn a_link_back_to_a_parent_folder_ends_the_scan() {
     assert_eq!(db.load_system_fonts(), 2);
 }
 
+/// The folder a font service keeps its fonts in, outside the font folders, and the font folder
+/// of [`fonts_the_platform_lists_outside_the_font_folders_are_cataloged_once`].
+fn service_dirs() -> (PathBuf, PathBuf) {
+    let tmp = std::env::temp_dir();
+    let id = std::process::id();
+    (tmp.join(format!("dc-sysfonts-{id}-service")), tmp.join(format!("dc-sysfonts-{id}-platform")))
+}
+
+/// The platform's list: a font service's file without an extension (twice, as for each face of a
+/// collection), a font folder's file by another path, a file gone since and a folder.
+fn service_files() -> Vec<PathBuf> {
+    let (service, folder) = service_dirs();
+    vec![service.join(".r/.12345"), folder.join("Sub/../Sysfont-Regular.ttf"), service.join(".r/.12345"), service.join("gone.otf"), service.clone()]
+}
+
+#[test]
+fn fonts_the_platform_lists_outside_the_font_folders_are_cataloged_once() {
+    let (service, folder) = service_dirs();
+    let dir = font_dir("platform");
+    assert_eq!(dir, folder);
+    let _ = std::fs::remove_dir_all(&service);
+    std::fs::create_dir_all(service.join(".r")).unwrap();
+    std::fs::write(service.join(".r/.12345"), renamed("SourceSans3-It.ttf")).unwrap();
+    let db = FontDb { font_files: service_files, ..FontDb::with_font_dirs(vec![dir]) };
+    assert_eq!(db.styles(FAMILY), ["Regular", "Bold", "Italic"]);
+    assert_eq!(db.load_system_fonts(), 3, "the font folder's Regular listed again isn't cataloged twice");
+    let italic = db.face(FAMILY, "Italic");
+    assert_eq!(italic.style, "Italic");
+    assert_eq!(italic.source.path(), Some(service.join(".r/.12345").as_path()));
+    let _ = std::fs::remove_dir_all(&service);
+}
+
 #[test]
 fn a_familys_kind_is_read_without_keeping_it_loaded() {
     let dir = font_dir("kind");
@@ -209,6 +241,25 @@ fn the_scan_reads_names_without_loading_the_font() {
     assert!(file_face_names(&dir.join("damaged.ttf")).is_empty());
     assert!(file_face_names(&dir.join("readme.txt")).is_empty());
     assert!(file_face_names(&dir.join("missing.ttf")).is_empty());
+}
+
+#[test]
+fn faces_without_outlines_are_not_cataloged() {
+    // A face whose glyphs live in a table nothing draws from (`hvgl`, say) lists no face; in a
+    // collection, its drawable sibling is still listed.
+    let regular = renamed("SourceSans3-Regular.ttf");
+    let mut hvgl = renamed("SourceSans3-It.ttf");
+    let tables = u16::from_be_bytes([hvgl[4], hvgl[5]]) as usize;
+    let glyf = (0..tables).map(|r| 12 + r * 16).find(|&at| &hvgl[at..at + 4] == b"glyf").unwrap();
+    hvgl[glyf..glyf + 4].copy_from_slice(b"hvgl");
+    let dir = std::env::temp_dir().join(format!("dc-sysfonts-outlines-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hvgl.ttf"), &hvgl).unwrap();
+    std::fs::write(dir.join("mixed.ttc"), collection(&[hvgl, regular])).unwrap();
+    assert!(file_face_names(&dir.join("hvgl.ttf")).is_empty());
+    let names: Vec<String> = file_face_names(&dir.join("mixed.ttc")).into_iter().map(|f| f.style).collect();
+    assert_eq!(names, ["Regular"]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
