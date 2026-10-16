@@ -1670,8 +1670,14 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
 
 /// Save by handing the serialized document to the host as a download (web).
 fn download_document(app: &mut DesignApp) -> Result<Value, String> {
-    let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).ok_or("no document")?;
-    let ser = app.run("file.serialize", json!({}))?;
+    // Preferences › File Handling › Save documents as: an IDML package (images embedded), or
+    // DesignCraft's own format.
+    let format = app.session.prefs.save_format;
+    let name = app.session.active().map(|d| format!("{}.{}", d.doc.title, format.extension())).ok_or("no document")?;
+    let ser = match format {
+        designcraft_engine::SaveFormat::Idml => app.run("file.exportIdml", json!({}))?,
+        designcraft_engine::SaveFormat::Designcraft => app.run("file.serialize", json!({}))?,
+    };
     let bytes = designcraft_engine::cmd::base64_decode(ser["base64"].as_str().unwrap_or_default());
     if let Some(download) = app.services.download.as_mut() {
         download(&name, &bytes);
@@ -4334,5 +4340,28 @@ mod save_format_tests {
         assert_eq!(super::with_save_extension("/a/Brochure", "idml"), "/a/Brochure.idml");
         assert_eq!(super::with_save_extension("/a/Brochure.idml", "designcraft"), "/a/Brochure.idml");
         assert_eq!(super::with_save_extension("/a/Brochure.designcraft", "idml"), "/a/Brochure.designcraft");
+    }
+    /// The web build saves by download: the download is named and written in the chosen format.
+    #[test]
+    fn a_download_save_follows_the_save_format() {
+        for (format, ext) in [("idml", "idml"), ("designcraft", "designcraft")] {
+            let dir = tempfile::tempdir().unwrap();
+            // The title is a path in the temporary folder: on the desktop, marking the download
+            // saved writes there too.
+            let title = dir.path().join("Brochure").to_string_lossy().to_string();
+            let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+            let got: Arc<Mutex<Vec<(String, Vec<u8>)>>> = Arc::default();
+            let sink = got.clone();
+            app.services.download = Some(Box::new(move |name: &str, bytes: &[u8]| sink.lock().unwrap().push((name.to_string(), bytes.to_vec()))));
+            app.run("prefs.set", json!({"saveFormat": format})).unwrap();
+            app.run("file.new", json!({"title": title})).unwrap();
+            app.run("frame.create", json!({"rect": [72, 72, 400, 200], "content": "text", "text": "Hello"})).unwrap();
+            app.run("app.save", json!({})).unwrap();
+            let got = got.lock().unwrap();
+            let [(name, bytes)] = got.as_slice() else { panic!("one download: {:?}", got.len()) };
+            assert!(name.ends_with(&format!("Brochure.{ext}")), "{name}");
+            assert_eq!(designcraft_idml::is_idml(bytes), format == "idml", "{format}");
+            assert!(!app.session.active().unwrap().is_dirty(), "the document counts as saved");
+        }
     }
 }
