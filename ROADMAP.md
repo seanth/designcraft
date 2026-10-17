@@ -348,6 +348,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-17** · Inline and anchored objects paint under their frame's text, on screen and in PDF, as InDesign draws them: a picture whose frame reaches into the next line (a negative Y offset) no longer hides the top of that line. No readiness percentage change.
 - **2026-10-17** · Parent pages: a running-header variable shows its name in angle brackets on the parent (it was blank), and while parents are edited the document pages' hidden characters, spelling squiggles and other overlays no longer pile onto the right parent page. No readiness percentage change.
 - **2026-10-17** · Running headers: *first/last on page* read a page in text order (story order, then column by column), not by height — a multi-column page's right header showed the lowest entry of column 1 instead of the page's last entry. No readiness percentage change.
 - **2026-10-16** · Inline and other anchored objects can be selected and resized on the page: the Selection tool clicks one where it sits in the text and shows its handles, a handle drag shows an outline and the size, and on release the frame takes it (cropping from the sides that moved; Cmd scales the content, Shift keeps proportions) and the text reflows, and Delete removes it from the text. Anchored Object Options and Release act on the selected object. Before, a click selected the text frame around it. No readiness percentage change.

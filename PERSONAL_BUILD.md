@@ -16,7 +16,8 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the nine branches below. |
+| `personal` | This build: upstream `main` + the ten branches below. |
+| `inline-objects-under-text` | Upstream `main` + inline objects paint under their frame's text, on screen and in PDF (one commit). No PR yet. |
 | `running-header-order` | Upstream `main` + running headers read a page in text order (one commit). No PR yet. |
 | `parent-page-display` | Upstream `main` + parent pages show running-header placeholders, and document-page overlays (¶ marks) stay off them (one commit). No PR yet. |
 | `drop-cap-size` | Upstream `main` + the drop cap point-size fix (one commit). PR [#1184](https://github.com/storytold/designcraft/pull/1184). |
@@ -39,6 +40,7 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 
 | Item | Branch / commits | Fixes | Upstream status |
 |---|---|---|---|
+| Inline pictures don't cover the next line | `inline-objects-under-text` (`afc6d31`) | Anchored objects were painted after all of their frame's text, so an inline picture hanging below its baseline (Def-e-nish page 7: the Flukemunschelfen picture, Y offset −17 pt) covered the top of *Foofie* with its white background. InDesign paints them under the text (its PDF draws the picture before the following lines). Renderer and PDF export now draw them after paragraph shading, before the text. Tests in both fail on upstream and pass with the fix. | Not yet offered upstream. |
 | Running headers read a page in text order | `running-header-order` (`34632c0`) | *First/last on page* sorted a page's entries by height, so a page whose last entry tops column 2 (or whose column 1 starts mid-entry) named the wrong one: Def-e-nish page 2's right header showed *Archangel* (bottom of column 1) instead of *Baas Roma*. Entries now order by their story's first position on the page, then by position in the story, as InDesign does. Its test fails on upstream and passes with the fix. | Not yet offered upstream. |
 | Parent pages: header placeholders, no stray ¶ marks | `parent-page-display` (`54ea155`) | On a parent page a running-header variable had no page to read and came out blank; it now shows `<variable name>`. While parents were edited, document frames weren't laid out and fell back to the canvas origin, which is the right parent page, so every page's hidden characters, spelling squiggles and similar overlays piled up there. Its canvas test fails on upstream and passes with the fix. | Not yet offered upstream. |
 | Drop caps scale with their point size | `drop-cap-size` (`54305b1`) | A drop cap comes out the same size whatever its point size. InDesign scales by cap size ÷ body size, keeping the baseline (checked against an InDesign capture). The cap's highlight and caret cover a cap that rises above the line. Its test fails on upstream and passes with the fix. | Open upstream as [#1184](https://github.com/storytold/designcraft/pull/1184) (2026-10-17). |
@@ -95,9 +97,12 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
   files into the page; Chrome's Local Font Access); none built yet.
 - **Copying objects between DesignCraft and other apps** isn't supported. Text copy and paste works.
 
+- **Inline-picture lines are taller than InDesign's**: DesignCraft adds the part of an inline picture below the baseline (a negative Y offset) to the line's height; InDesign doesn't (its line is the picture's height above the baseline + 2.8 pt here). Def-e-nish page 7: 14 pt more space above the Flukemunschelfen picture.
+
 ## Not yet verified
 
 - **On the Mac:**
+  - `inline-objects-under-text`: dictionary page 7, *Foofie* is whole under the Flukemunschelfen picture.
   - `running-header-order`: in the dictionary, page 2's right header reads *Baas Roma*.
   - `parent-page-display`: open the parent spread with hidden characters shown: the headers read `<first on page>` and `<last on page>`, and the right page has no stray ¶ marks.
   - With DesignCraft open, install a font in Font Book, switch back: the font is in the font menu,
