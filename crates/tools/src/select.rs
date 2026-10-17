@@ -1234,12 +1234,13 @@ impl Tool for SelectionTool {
                 let r = cx.layout.xf(*spread).transform_rect_bbox(*to);
                 vec![
                     Overlay::Path { path: designcraft_geom::Shape::to_path(&r, 0.1), color: [79, 153, 255], dashed: false },
+                    // In the document's ruler units, as its Control and Properties fields show them.
                     Overlay::Measure {
                         p: *p,
                         text: format!(
                             "W: {}\nH: {}",
-                            designcraft_geom::format_measure(to.width(), cx.unit),
-                            designcraft_geom::format_measure(to.height(), cx.unit)
+                            designcraft_geom::format_measure(to.width(), cx.doc.settings.horizontal_units),
+                            designcraft_geom::format_measure(to.height(), cx.doc.settings.vertical_units)
                         ),
                     },
                 ]
