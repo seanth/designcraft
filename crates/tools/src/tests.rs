@@ -1936,3 +1936,56 @@ fn loaded_text_cursor_threads_into_a_frame_inside_a_group() {
     assert_eq!(cx2.hit_text_frame(q).map(|(_, i)| i), None, "no text frame in that group");
     assert_eq!(t2.cursor(&cx2, q, Mods::default()), Cursor::NotAllowed);
 }
+
+/// A text frame holding a 24 × 40 inline box after "Before": (document, story, the box's canvas rect).
+fn inline_box_doc() -> (Document, designcraft_doc::StoryId) {
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(100.0, 100.0, 400.0, 400.0), lid, "Before after", ParaFormat::default()).unwrap();
+    let item = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, shapes::rectangle(Rect::new(0.0, 0.0, 24.0, 40.0)));
+    let obj = designcraft_doc::AnchoredObject::new(item, designcraft_doc::AnchorPosition::Inline { y_offset: 0.0 });
+    d.story_mut(sid).unwrap().insert_object(7, obj);
+    (d, sid)
+}
+
+#[test]
+fn selection_tool_selects_an_inline_object_and_resizes_it_by_a_handle() {
+    let (d, sid) = inline_box_doc();
+    let (s, c, l) = (Selection::default(), Cache::new(), CanvasLayout::new(&d, false));
+    let cx = ctx(&d, &s, &c, &l);
+    let pl = crate::anchored::placed(&d, &c, &l, None);
+    assert_eq!(pl.len(), 1);
+    let r = pl[0].canvas_rect;
+    assert!((r.width() - 24.0).abs() < 1e-6 && (r.height() - 40.0).abs() < 1e-6, "{r:?}");
+    // A click on it selects it (not the text frame), and a drag doesn't move it.
+    let mut t = create("selection");
+    let c0 = r.center();
+    assert_eq!(
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, c0.x, c0.y)),
+        vec![Action::Exec("anchored.select".into(), serde_json::json!({"story": sid.0, "index": 0}))]
+    );
+    assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, c0.x + 30.0, c0.y)).is_empty());
+    assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, c0.x + 30.0, c0.y)).is_empty());
+    // Selected, its bottom-right handle resizes it: the preview resizes it in its own space.
+    let s = Selection { anchored: Some(designcraft_doc::AnchoredSel { story: sid, index: 0 }), ..Default::default() };
+    let cx = ctx(&d, &s, &c, &l);
+    let mut t = create("selection");
+    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, r.x1, r.y1)), vec![Action::Begin("Resize".into())]);
+    match t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, r.x1 + 6.0, r.y1 + 10.0)).as_slice() {
+        [Action::Preview(cmd, p)] => {
+            assert_eq!(cmd, "anchored.resize");
+            assert_eq!(p["from"], serde_json::json!([0.0, 0.0, 24.0, 40.0]));
+            assert_eq!(p["to"], serde_json::json!([0.0, 0.0, 30.0, 50.0]));
+            assert_eq!(p["content"], false);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, r.x1 + 6.0, r.y1 + 10.0)), vec![Action::Commit]);
+    // Clicking the text beside it selects the frame as before.
+    let mut t = create("selection");
+    let a = t.pointer(
+        &cx,
+        &PointerEvent::new(PointerKind::Down, 380.0 + l.xf(SpreadRef::Doc(0)).translation().x, 380.0 + l.xf(SpreadRef::Doc(0)).translation().y),
+    );
+    assert!(matches!(a.as_slice(), [Action::Exec(c, _)] if c == "selection.set"), "{a:?}");
+}
