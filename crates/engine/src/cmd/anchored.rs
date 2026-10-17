@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Resize Anchored Object",
             [],
             None,
-            "{story?, index? (default: the selected anchored object), from: rect, to: rect (the object's bounds before and after, in its own space: [x0, y0, x1, y1]), content?: bool (scale its content with it; default: the frame alone resizes and crops it)} — the text reflows around the new size",
+            "{story?, index? (default: the selected anchored object), from: rect, to: rect (the object's bounds before and after, in its own space: [x0, y0, x1, y1]), content?: bool (scale its content with it; default: the frame alone resizes and crops it)} — it takes the size of `to` from its top-left (the text places it), and the text reflows around it",
             has_doc,
             resize
         ),
@@ -215,8 +215,9 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Null)
 }
 
-/// Resize an anchored object's frame from its bounds `from` to `to` (its own space). Its top-left
-/// stays at the origin, where composition places it; the text reflows around the new size.
+/// Resize an anchored object's frame from its bounds `from` to the size of `to` (its own space),
+/// from its top-left, which stays at the origin where composition places it; the text reflows
+/// around the new size.
 fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     let (sid, k) = object_ref(s, p, "anchored.resize")?;
     let from = super::rect_param(p, "from").ok_or_else(|| bad("anchored.resize", "missing from"))?;
@@ -230,7 +231,10 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     const MAX: f64 = 15552.0;
     let sx = to.width().abs().clamp(MIN, MAX) / from.width().abs();
     let sy = to.height().abs().clamp(MIN, MAX) / from.height().abs();
-    let m = Affine::translate((to.x0.min(to.x1), to.y0.min(to.y1))) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
+    // The text places the object, so it grows and shrinks from its top-left whichever handle is
+    // dragged: its content stays where it is in the frame (dragging the top or left handle
+    // doesn't slide the picture).
+    let m = Affine::translate((from.x0, from.y0)) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
     let content = p.get("content").and_then(Value::as_bool).unwrap_or(false);
     let strokes = s.prefs.scale_strokes;
     s.edit(|d, _| {
@@ -362,6 +366,40 @@ mod tests {
         s.execute("edit.undo", &json!({})).unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc.story(sid).unwrap().objects[0].size(), (24.0, 40.0));
+    }
+
+    #[test]
+    fn top_and_left_handles_resize_without_sliding_the_picture() {
+        let (mut s, sid) = inline_box();
+        let graphic = designcraft_doc::Graphic {
+            asset: designcraft_doc::AssetId(1),
+            size: (24.0, 40.0),
+            xf: Affine::IDENTITY,
+            clip: None,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+            wrap: Default::default(),
+            fill: Default::default(),
+        };
+        s.edit(|d, _| {
+            Arc::make_mut(&mut d.story_mut(sid).unwrap().objects[0]).item.content = Content::Graphic(graphic.clone());
+            Ok(Value::Null)
+        })
+        .unwrap();
+        let at = |s: &Session| {
+            let it = s.doc().unwrap().doc.story(sid).unwrap().objects[0].item.clone();
+            let Content::Graphic(g) = &it.content else { panic!() };
+            ((it.xf * g.xf) * designcraft_geom::Point::ORIGIN, it.bounds())
+        };
+        let (p0, _) = at(&s);
+        s.execute("anchored.select", &json!({"story": sid.0, "index": 0})).unwrap();
+        // Dragging the top handle up 20 and the left handle out 10: taller and wider, and the
+        // picture stays at the frame's top-left, as with the bottom and right handles.
+        s.execute("anchored.resize", &json!({"from": [0, 0, 24, 40], "to": [-10, -20, 24, 40]})).unwrap();
+        let (p1, b) = at(&s);
+        assert!((b.width() - 34.0).abs() < 1e-9 && (b.height() - 60.0).abs() < 1e-9 && b.x0.abs() < 1e-9 && b.y0.abs() < 1e-9, "{b:?}");
+        assert!((p1 - p0).hypot() < 1e-9, "the picture moved from {p0:?} to {p1:?}");
     }
 
     #[test]
