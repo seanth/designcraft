@@ -4,8 +4,8 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-16. Based on upstream `main` at `c2609f9` (0.8.0 plus aiongg's integration
-branch, merged upstream as PR #1139).
+Last updated: 2026-10-16. Based on upstream `main` at `b17efb2` (brought in with `inline-object-select`;
+before that `c2609f9`, 0.8.0 plus aiongg's integration branch, merged upstream as PR #1139).
 
 `personal` is rebuilt from upstream `main` whenever upstream merges something it carried
 (2026-10-13, 14, 15 and 16). Each rebuild is joined to the previous `personal` history with a
@@ -16,9 +16,10 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the five branches below. |
+| `personal` | This build: upstream `main` + the six branches below. |
 | `drop-cap-size` | Upstream `main` + the drop cap point-size fix (one commit), for a PR to storytold. |
 | `font-rescan` | Upstream `main` + fonts installed while running are found when the window regains focus. Worth a PR to storytold (#547, #328). |
+| `inline-object-select` | Upstream `main` + inline (anchored) images selected and resized with the Selection tool (one commit). Worth a PR to storytold. |
 | `flexible-word-spacing` | Upstream `main` + Preferences › Composition › Word Spacing below Minimum (one commit). Worth a PR to storytold. |
 | `idml-app-icon-drop` | Upstream `main` + `.idml` files can be dropped on the macOS app icon when InDesign is installed (one commit). Worth a PR to storytold (a gap in #417). |
 | `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). **Personal only.** |
@@ -39,6 +40,7 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 | Fonts installed while running are found when the window regains focus | `font-rescan` (`55f39ad`, ported onto upstream's reworked scan in `0b32ed6`) | [#547](https://github.com/storytold/designcraft/issues/547) / [#328](https://github.com/storytold/designcraft/issues/328): a font installed while DesignCraft runs needs a restart. Upstream can rescan (`load_system_fonts`, with #315's retry of missing characters and #443's fonts activated by font managers), but nothing calls it while the app runs; its own `docs/gaps.md` still lists "reload when fonts change on disk (#328)". This branch rescans in the background when the window regains focus, reads only files whose size or date changed, and re-lays out text when the fonts actually changed. | PR to storytold to open; reference #328. |
 | `.idml` dropped on the macOS app icon opens | `idml-app-icon-drop` (`b09233a`) | Upstream's #417 declares `.idml` only by a type it imports. When InDesign is installed, its own exported type for `.idml` wins, so the declaration no longer matches: Finder refuses the drop on the app's icon and Open With leaves DesignCraft out, while Dock drops still work. Adds a second `CFBundleDocumentTypes` entry by extension (Viewer, Alternate), which matches whatever type the file has. Only `packaging/macos/Info.plist.in` changes; checked that it parses. | Not in upstream (checked 2026-10-16). PR to storytold to open. |
 | Justified lines may squeeze word spaces below the Minimum, as InDesign does | `flexible-word-spacing` (`bf481d0`) | InDesign treats Minimum Word Spacing as a preference: it squeezes a line's spaces below it (to 25–30%) rather than set a much looser line. DesignCraft treated it as a limit, so lines broke differently (in the dictionary IDML, page 1's cat image moved to column 2 and every later page shifted). The rules were measured from InDesign's PDFs against their IDML (dictionary; Samhain story file with and without hyphenation): Single-line Composer fills to the Minimum and squeezes one more word when that falls short of Desired by less than 0.19× what the loose line exceeds it (97% of lines); Paragraph Composer costs each line ln(spacing ÷ Desired)², ×4 when squeezed (89% of paragraphs, 75% before). A document setting in Preferences › Composition: on for documents opened from IDML, off (as before) for new ones and old `.designcraft` files. The dictionary now matches 87.3% of InDesign's lines (72.5% before); page 1 now ends at *Antefa* as in InDesign. Hyphenated text still differs mostly by hyphenation points (DesignCraft and InDesign agree on ~60% of hyphenated words). | Not in upstream (checked 2026-10-16). PR to storytold to open. |
+| Inline images can be selected and resized | `inline-object-select` (`d51a650`) | An inline or anchored image lives in its story, not on the page, so the Selection tool never found it: a click selected the text frame around it. Now a click selects it where it sits in the text and shows its handles (a drag doesn't move it; it flows with the text, as in InDesign). A handle drag resizes the frame and crops the picture; ⌘-drag scales the picture too; Shift keeps proportions; the text reflows as you drag; one undo step. Delete removes it from the text; Anchored Object Options and Release act on it. New commands `anchored.select`, `anchored.resize`. Not yet: objects in footnotes or table cells, objects turned with their frame, and the other object commands (fitting, stroke and fill, Direct Selection of the picture). | Not in upstream (checked 2026-10-16). Issue filed upstream by Sean; PR to open. |
 
 ### Personal-only feature (not for upstream)
 
@@ -102,6 +104,7 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
     the edit is there. A new document's ⌘S suggests `Untitled-1.idml`.
   - Upstream's Finder/Dock opening (#417), which replaced ours: double-click an `.idml`, drop one
     on the Dock icon, Open With.
+  - `inline-object-select`: in the dictionary, click an image with the Selection tool: it shows its handles. Drag a corner: the frame resizes and the text reflows; ⌘-drag scales the picture; Undo restores it; Delete removes it.
   - `flexible-word-spacing`: open the dictionary IDML; page 1 ends at *Antefa* with the cat in column 1. Preferences › Composition › Word Spacing below Minimum shows *InDesign-compatible*; choosing *Never (strict)* reflows it as before, and Undo puts it back.
   - `idml-app-icon-drop`: after installing the rebuilt app, launch it once so macOS re-reads its
     file types; then dropping an `.idml` on the app's icon in Finder (or in Applications) opens it,
