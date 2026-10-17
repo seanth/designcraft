@@ -348,6 +348,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-17** · Cross-references keep text typed over their generated text (IDML import and export), with the page number still live, as InDesign shows them until updated; a cross-reference whose destination is gone shows its saved text and page instead of "??"; and a cross-reference's text breaks at its spaces instead of inside words. No readiness percentage change.
 - **2026-10-17** · Inline and anchored objects paint under their frame's text, on screen and in PDF, as InDesign draws them: a picture whose frame reaches into the next line (a negative Y offset) no longer hides the top of that line. No readiness percentage change.
 - **2026-10-17** · Parent pages: a running-header variable shows its name in angle brackets on the parent (it was blank), and while parents are edited the document pages' hidden characters, spelling squiggles and other overlays no longer pile onto the right parent page. No readiness percentage change.
 - **2026-10-17** · Running headers: *first/last on page* read a page in text order (story order, then column by column), not by height — a multi-column page's right header showed the lowest entry of column 1 instead of the page's last entry. No readiness percentage change.
