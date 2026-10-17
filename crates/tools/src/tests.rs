@@ -1976,7 +1976,19 @@ fn selection_tool_selects_an_inline_object_and_resizes_it_by_a_handle() {
     assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, left.x + 6.0, left.y)), vec![Action::Handled]);
     let ov = t.overlays(&cx);
     assert!(ov.iter().any(|o| matches!(o, Overlay::Path { path, .. } if (designcraft_geom::Shape::bounding_box(path).x0 - (r.x0 + 6.0)).abs() < 1e-6 && (designcraft_geom::Shape::bounding_box(path).x1 - r.x1).abs() < 1e-6)), "{ov:?}");
-    assert!(ov.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text.starts_with("W: 18"))), "{ov:?}");
+    // A new document measures in picas: 18 pt is 1p6.
+    assert!(ov.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text.starts_with("W: 1p6"))), "{ov:?}");
+    // The readout is in the document's units (inches here), not the tool's default.
+    let mut din = d.clone();
+    din.settings.horizontal_units = Unit::Inches;
+    din.settings.vertical_units = Unit::Inches;
+    let lin = CanvasLayout::new(&din, false);
+    let cxin = ctx(&din, &s, &c, &lin);
+    let mut t2 = create("selection");
+    t2.pointer(&cxin, &PointerEvent::new(PointerKind::Down, left.x, left.y));
+    t2.pointer(&cxin, &PointerEvent::new(PointerKind::Drag, left.x + 6.0, left.y));
+    let ov = t2.overlays(&cxin);
+    assert!(ov.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text.contains(" in") && !text.contains("pt"))), "{ov:?}");
     match t.pointer(&cx, &PointerEvent::new(PointerKind::Up, left.x + 6.0, left.y)).as_slice() {
         [Action::Exec(cmd, p)] => {
             assert_eq!(cmd, "anchored.resize");
