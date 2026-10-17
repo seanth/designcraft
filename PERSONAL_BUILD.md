@@ -16,7 +16,9 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the seven branches below. |
+| `personal` | This build: upstream `main` + the nine branches below. |
+| `running-header-order` | Upstream `main` + running headers read a page in text order (one commit). No PR yet. |
+| `parent-page-display` | Upstream `main` + parent pages show running-header placeholders, and document-page overlays (¶ marks) stay off them (one commit). No PR yet. |
 | `drop-cap-size` | Upstream `main` + the drop cap point-size fix (one commit). PR [#1184](https://github.com/storytold/designcraft/pull/1184). |
 | `font-rescan` | Upstream `main` + fonts installed while running are found when the window regains focus. No PR: MaridWSH's [#1163](https://github.com/storytold/designcraft/pull/1163) (Type › Reload Fonts, manual) covers #547 and #328 and handles edited fonts better; it leaves the focus trigger for a follow-up. Once #1163 merges, rework this as that follow-up (focus runs its reload in the background) and drop our own file-stamp code. |
 | `tool-units` | Upstream `main` + tool readouts (Page tool size, smart-guide distances) in the document's ruler units instead of always picas (one commit). PR [#1196](https://github.com/storytold/designcraft/pull/1196). |
@@ -37,6 +39,8 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 
 | Item | Branch / commits | Fixes | Upstream status |
 |---|---|---|---|
+| Running headers read a page in text order | `running-header-order` (`34632c0`) | *First/last on page* sorted a page's entries by height, so a page whose last entry tops column 2 (or whose column 1 starts mid-entry) named the wrong one: Def-e-nish page 2's right header showed *Archangel* (bottom of column 1) instead of *Baas Roma*. Entries now order by their story's first position on the page, then by position in the story, as InDesign does. Its test fails on upstream and passes with the fix. | Not yet offered upstream. |
+| Parent pages: header placeholders, no stray ¶ marks | `parent-page-display` (`54ea155`) | On a parent page a running-header variable had no page to read and came out blank; it now shows `<variable name>`. While parents were edited, document frames weren't laid out and fell back to the canvas origin, which is the right parent page, so every page's hidden characters, spelling squiggles and similar overlays piled up there. Its canvas test fails on upstream and passes with the fix. | Not yet offered upstream. |
 | Drop caps scale with their point size | `drop-cap-size` (`54305b1`) | A drop cap comes out the same size whatever its point size. InDesign scales by cap size ÷ body size, keeping the baseline (checked against an InDesign capture). The cap's highlight and caret cover a cap that rises above the line. Its test fails on upstream and passes with the fix. | Open upstream as [#1184](https://github.com/storytold/designcraft/pull/1184) (2026-10-17). |
 | Fonts installed while running are found when the window regains focus | `font-rescan` (`55f39ad`, ported onto upstream's reworked scan in `0b32ed6`) | [#547](https://github.com/storytold/designcraft/issues/547) / [#328](https://github.com/storytold/designcraft/issues/328): a font installed while DesignCraft runs needs a restart. Upstream can rescan (`load_system_fonts`, with #315's retry of missing characters and #443's fonts activated by font managers), but nothing calls it while the app runs; its own `docs/gaps.md` still lists "reload when fonts change on disk (#328)". This branch rescans in the background when the window regains focus, reads only files whose size or date changed, and re-lays out text when the fonts actually changed. | Waiting on [#1163](https://github.com/storytold/designcraft/pull/1163) (manual reload, open 2026-10-17); then a focus-trigger follow-up PR. |
 | `.idml` dropped on the macOS app icon opens | `idml-app-icon-drop` (`b09233a`) | Upstream's #417 declares `.idml` only by a type it imports. When InDesign is installed, its own exported type for `.idml` wins, so the declaration no longer matches: Finder refuses the drop on the app's icon and Open With leaves DesignCraft out, while Dock drops still work. Adds a second `CFBundleDocumentTypes` entry by extension (Viewer, Alternate), which matches whatever type the file has. Only `packaging/macos/Info.plist.in` changes; checked that it parses. | Open upstream as [#1183](https://github.com/storytold/designcraft/pull/1183) (2026-10-17). |
@@ -82,11 +86,6 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 
 ## Problems found but not fixed
 
-- **Running headers pick entries by height first, then left to right** (#301's logic, now
-  upstream). Wrong when columns start at different heights: on the Def-e-nish page 16 the left
-  column starts mid-entry, so its first headword sits below the top of the right column and the
-  header names a right-column entry first. InDesign takes the first and last entries in text
-  order. Worth an upstream issue now that #301 is merged.
 - **"Page N" header text** (Def-e-nish IDML): needs the BarryGothicC font installed. Without it
   the fallback font's ascent puts the first baseline below the 11 pt frame.
 - **Dictionary page layout differs from InDesign** (Def-e-nish, page 16): the left column starts
@@ -99,6 +98,8 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 ## Not yet verified
 
 - **On the Mac:**
+  - `running-header-order`: in the dictionary, page 2's right header reads *Baas Roma*.
+  - `parent-page-display`: open the parent spread with hidden characters shown: the headers read `<first on page>` and `<last on page>`, and the right page has no stray ¶ marks.
   - With DesignCraft open, install a font in Font Book, switch back: the font is in the font menu,
     and text set in it (shown in a fallback while it was missing) now uses it.
   - A drop cap set larger than the body text is taller than one set at the body's size.
