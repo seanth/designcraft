@@ -60,13 +60,16 @@ enum Drag {
         start_rotation: Option<f64>,
     },
     /// Resizing a selected anchored object by a handle: `from` its bounds on `spread` and `local`
-    /// its bounds in its own space, at pointer down.
+    /// its bounds in its own space, at pointer down. As in InDesign, only an outline follows the
+    /// pointer (`to`, on the spread, with the pointer and Cmd); the object resizes on release,
+    /// when the text places it again.
     AnchoredResize {
         sel: designcraft_doc::AnchoredSel,
         handle: usize,
         from: Rect,
         local: Rect,
         spread: SpreadRef,
+        to: Option<(Rect, Point, bool)>,
     },
     Marquee {
         start: Point,
@@ -691,8 +694,8 @@ impl Tool for SelectionTool {
             {
                 let turns = cx.layout.slot(pl.spread).map_or(0, |s| s.rotation as usize);
                 let handle = (h + 8 - 2 * turns) % 8;
-                self.drag = Drag::AnchoredResize { sel: pl.sel, handle, from: pl.spread_rect, local: o.item.bounds(), spread: pl.spread };
-                return vec![Action::Begin("Resize".into())];
+                self.drag = Drag::AnchoredResize { sel: pl.sel, handle, from: pl.spread_rect, local: o.item.bounds(), spread: pl.spread, to: None };
+                return vec![Action::Handled];
             }
             if handle_at(cx, p).is_none()
                 && let Some(pl) = crate::anchored::at(cx.doc, cx.cache, cx.layout, p)
@@ -1024,20 +1027,10 @@ impl Tool for SelectionTool {
                         json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute}),
                     )]
                 }
-                Drag::AnchoredResize { sel, handle, from, local, spread } => {
+                Drag::AnchoredResize { sel, handle, from, local, spread, .. } => {
                     let to = resize_rect(from, handle, cx.layout.to_spread(spread, p), ev.mods);
-                    // Spread → the object's own space (its frame may scale it).
-                    let (kx, ky) = (local.width() / from.width().max(1e-9), local.height() / from.height().max(1e-9));
-                    let to_local = Rect::new(
-                        local.x0 + (to.x0 - from.x0) * kx,
-                        local.y0 + (to.y0 - from.y0) * ky,
-                        local.x0 + (to.x1 - from.x0) * kx,
-                        local.y0 + (to.y1 - from.y0) * ky,
-                    );
-                    vec![Action::Preview(
-                        "anchored.resize".into(),
-                        json!({"story": sel.story.0, "index": sel.index, "from": rect_json(local), "to": rect_json(to_local), "content": ev.mods.cmd}),
-                    )]
+                    self.drag = Drag::AnchoredResize { sel, handle, from, local, spread, to: Some((to, p, ev.mods.cmd)) };
+                    vec![Action::Handled]
                 }
                 Drag::ContentResize { id, handle, from, spread } => {
                     let to = resize_rect(from, handle, cx.layout.to_spread(spread, p), ev.mods);
@@ -1145,7 +1138,6 @@ impl Tool for SelectionTool {
                 match d {
                     Drag::Move { .. }
                     | Drag::Resize { .. }
-                    | Drag::AnchoredResize { .. }
                     | Drag::ContentResize { .. }
                     | Drag::Anchor { .. }
                     | Drag::Rotate { .. }
@@ -1153,6 +1145,22 @@ impl Tool for SelectionTool {
                     | Drag::Bracket { .. } => {
                         vec![Action::Commit]
                     }
+                    // Released: the object takes the outline's size and the text places it again.
+                    Drag::AnchoredResize { sel, from, local, to: Some((to, _, cmd)), .. } => {
+                        // Spread → the object's own space (its frame may scale it).
+                        let (kx, ky) = (local.width() / from.width().max(1e-9), local.height() / from.height().max(1e-9));
+                        let to_local = Rect::new(
+                            local.x0 + (to.x0 - from.x0) * kx,
+                            local.y0 + (to.y0 - from.y0) * ky,
+                            local.x0 + (to.x1 - from.x0) * kx,
+                            local.y0 + (to.y1 - from.y0) * ky,
+                        );
+                        vec![Action::Exec(
+                            "anchored.resize".into(),
+                            json!({"story": sel.story.0, "index": sel.index, "from": rect_json(local), "to": rect_json(to_local), "content": cmd}),
+                        )]
+                    }
+                    Drag::AnchoredResize { to: None, .. } => vec![],
                     Drag::Pending { .. } => match release {
                         Some(id) => vec![Action::Exec("selection.toggle".into(), json!({"id": id}))],
                         None => vec![],
@@ -1221,6 +1229,21 @@ impl Tool for SelectionTool {
             Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
             // The whole graphic shows while it's resized, outside the frame too.
             Drag::ContentResize { id, .. } => vec![Overlay::ContentGhost(*id)],
+            // The outline the anchored object will take, and its size at the pointer.
+            Drag::AnchoredResize { spread, to: Some((to, p, _)), .. } => {
+                let r = cx.layout.xf(*spread).transform_rect_bbox(*to);
+                vec![
+                    Overlay::Path { path: designcraft_geom::Shape::to_path(&r, 0.1), color: [79, 153, 255], dashed: false },
+                    Overlay::Measure {
+                        p: *p,
+                        text: format!(
+                            "W: {}\nH: {}",
+                            designcraft_geom::format_measure(to.width(), cx.unit),
+                            designcraft_geom::format_measure(to.height(), cx.unit)
+                        ),
+                    },
+                ]
+            }
             Drag::None | Drag::Bracket { .. } => brackets(cx),
             _ => vec![],
         };

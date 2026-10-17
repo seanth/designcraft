@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Resize Anchored Object",
             [],
             None,
-            "{story?, index? (default: the selected anchored object), from: rect, to: rect (the object's bounds before and after, in its own space: [x0, y0, x1, y1]), content?: bool (scale its content with it; default: the frame alone resizes and crops it)} — it takes the size of `to` from its top-left (the text places it), and the text reflows around it",
+            "{story?, index? (default: the selected anchored object), from: rect, to: rect (the object's bounds before and after, in its own space: [x0, y0, x1, y1]), content?: bool (scale its content with it; default: the frame alone resizes and crops it from the sides that moved)} — the text then places it again and reflows around it",
             has_doc,
             resize
         ),
@@ -215,9 +215,10 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Null)
 }
 
-/// Resize an anchored object's frame from its bounds `from` to the size of `to` (its own space),
-/// from its top-left, which stays at the origin where composition places it; the text reflows
-/// around the new size.
+/// Resize an anchored object's frame from its bounds `from` to `to` (its own space): the content
+/// keeps its place while the edges move, so a frame made narrower from the left crops the
+/// picture's left side. Its top-left then returns to the origin, where composition places it,
+/// and the text reflows around the new size.
 fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     let (sid, k) = object_ref(s, p, "anchored.resize")?;
     let from = super::rect_param(p, "from").ok_or_else(|| bad("anchored.resize", "missing from"))?;
@@ -231,10 +232,10 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     const MAX: f64 = 15552.0;
     let sx = to.width().abs().clamp(MIN, MAX) / from.width().abs();
     let sy = to.height().abs().clamp(MIN, MAX) / from.height().abs();
-    // The text places the object, so it grows and shrinks from its top-left whichever handle is
-    // dragged: its content stays where it is in the frame (dragging the top or left handle
-    // doesn't slide the picture).
-    let m = Affine::translate((from.x0, from.y0)) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
+    // The dragged edges move and the content stays where it was on the page (InDesign crops a
+    // picture from the side whose handle moved). Then the text places the object again by its
+    // top-left, so after a left or top handle the frame and picture shift together.
+    let m = Affine::translate((to.x0.min(to.x1), to.y0.min(to.y1))) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
     let content = p.get("content").and_then(Value::as_bool).unwrap_or(false);
     let strokes = s.prefs.scale_strokes;
     s.edit(|d, _| {
@@ -369,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn top_and_left_handles_resize_without_sliding_the_picture() {
+    fn a_left_or_top_handle_crops_that_side_of_the_picture() {
         let (mut s, sid) = inline_box();
         let graphic = designcraft_doc::Graphic {
             asset: designcraft_doc::AssetId(1),
@@ -383,23 +384,32 @@ mod tests {
             fill: Default::default(),
         };
         s.edit(|d, _| {
-            Arc::make_mut(&mut d.story_mut(sid).unwrap().objects[0]).item.content = Content::Graphic(graphic.clone());
+            let it = &mut Arc::make_mut(&mut d.story_mut(sid).unwrap().objects[0]).item;
+            // At the frame's top-left, in its inner space.
+            let inner = it.inner_bounds();
+            it.content = Content::Graphic(designcraft_doc::Graphic { xf: Affine::translate((inner.x0, inner.y0)), ..graphic.clone() });
             Ok(Value::Null)
         })
         .unwrap();
-        let at = |s: &Session| {
+        // The picture's top-left relative to the frame's.
+        let offset = |s: &Session| {
             let it = s.doc().unwrap().doc.story(sid).unwrap().objects[0].item.clone();
             let Content::Graphic(g) = &it.content else { panic!() };
-            ((it.xf * g.xf) * designcraft_geom::Point::ORIGIN, it.bounds())
+            let b = it.bounds();
+            ((it.xf * g.xf) * designcraft_geom::Point::ORIGIN - designcraft_geom::Point::new(b.x0, b.y0), b)
         };
-        let (p0, _) = at(&s);
         s.execute("anchored.select", &json!({"story": sid.0, "index": 0})).unwrap();
-        // Dragging the top handle up 20 and the left handle out 10: taller and wider, and the
-        // picture stays at the frame's top-left, as with the bottom and right handles.
-        s.execute("anchored.resize", &json!({"from": [0, 0, 24, 40], "to": [-10, -20, 24, 40]})).unwrap();
-        let (p1, b) = at(&s);
-        assert!((b.width() - 34.0).abs() < 1e-9 && (b.height() - 60.0).abs() < 1e-9 && b.x0.abs() < 1e-9 && b.y0.abs() < 1e-9, "{b:?}");
-        assert!((p1 - p0).hypot() < 1e-9, "the picture moved from {p0:?} to {p1:?}");
+        // The left handle 10 pt right and the top handle 20 pt down: the picture stayed put while
+        // those edges moved, so its left 10 and top 20 points are cropped.
+        s.execute("anchored.resize", &json!({"from": [0, 0, 24, 40], "to": [10, 20, 24, 40]})).unwrap();
+        let (d, b) = offset(&s);
+        assert!((b.width() - 14.0).abs() < 1e-9 && (b.height() - 20.0).abs() < 1e-9 && b.x0.abs() < 1e-9 && b.y0.abs() < 1e-9, "{b:?}");
+        assert!((d.x + 10.0).abs() < 1e-9 && (d.y + 20.0).abs() < 1e-9, "{d:?}");
+        // The right and bottom handles leave the picture at the frame's top-left.
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("anchored.resize", &json!({"from": [0, 0, 24, 40], "to": [0, 0, 30, 50]})).unwrap();
+        let (d, _) = offset(&s);
+        assert!(d.x.abs() < 1e-9 && d.y.abs() < 1e-9, "{d:?}");
     }
 
     #[test]

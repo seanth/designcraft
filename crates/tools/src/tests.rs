@@ -1966,21 +1966,30 @@ fn selection_tool_selects_an_inline_object_and_resizes_it_by_a_handle() {
     );
     assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, c0.x + 30.0, c0.y)).is_empty());
     assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, c0.x + 30.0, c0.y)).is_empty());
-    // Selected, its bottom-right handle resizes it: the preview resizes it in its own space.
+    // Selected, its left handle drags an outline (the object stays as it is while dragging, as in
+    // InDesign); on release it resizes in its own space and the text places it again.
     let s = Selection { anchored: Some(designcraft_doc::AnchoredSel { story: sid, index: 0 }), ..Default::default() };
     let cx = ctx(&d, &s, &c, &l);
     let mut t = create("selection");
-    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, r.x1, r.y1)), vec![Action::Begin("Resize".into())]);
-    match t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, r.x1 + 6.0, r.y1 + 10.0)).as_slice() {
-        [Action::Preview(cmd, p)] => {
+    let left = Point::new(r.x0, r.center().y);
+    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, left.x, left.y)), vec![Action::Handled]);
+    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, left.x + 6.0, left.y)), vec![Action::Handled]);
+    let ov = t.overlays(&cx);
+    assert!(ov.iter().any(|o| matches!(o, Overlay::Path { path, .. } if (designcraft_geom::Shape::bounding_box(path).x0 - (r.x0 + 6.0)).abs() < 1e-6 && (designcraft_geom::Shape::bounding_box(path).x1 - r.x1).abs() < 1e-6)), "{ov:?}");
+    assert!(ov.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text.starts_with("W: 18"))), "{ov:?}");
+    match t.pointer(&cx, &PointerEvent::new(PointerKind::Up, left.x + 6.0, left.y)).as_slice() {
+        [Action::Exec(cmd, p)] => {
             assert_eq!(cmd, "anchored.resize");
             assert_eq!(p["from"], serde_json::json!([0.0, 0.0, 24.0, 40.0]));
-            assert_eq!(p["to"], serde_json::json!([0.0, 0.0, 30.0, 50.0]));
+            assert_eq!(p["to"], serde_json::json!([6.0, 0.0, 24.0, 40.0]));
             assert_eq!(p["content"], false);
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, r.x1 + 6.0, r.y1 + 10.0)), vec![Action::Commit]);
+    // A press on a handle without a drag changes nothing.
+    let mut t = create("selection");
+    t.pointer(&cx, &PointerEvent::new(PointerKind::Down, r.x1, r.y1));
+    assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, r.x1, r.y1)).is_empty());
     // Clicking the text beside it selects the frame as before.
     let mut t = create("selection");
     let a = t.pointer(
