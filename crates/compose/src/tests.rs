@@ -7336,7 +7336,6 @@ mod flexible_word_spacing {
     }
 }
 
-
 /// A cross-reference's text breaks at its spaces like ordinary text (it is real text in
 /// InDesign), not inside words; edited text whose destination is gone shows its saved page.
 #[test]
