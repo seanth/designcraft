@@ -2411,10 +2411,15 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             p[k] = v;
             p
         };
-        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Relink…"))).clicked()
-            && let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink"))
-        {
-            let _ = app.run("links.relink", with("path", json!(path)));
+        if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Relink…"))).clicked() {
+            if app.services.pick_open.is_some() {
+                if let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink")) {
+                    let _ = app.run("links.relink", with("path", json!(path)));
+                }
+            } else if !is_text {
+                // The browser hands over the chosen file's bytes, not a path.
+                app.request_files(&format!("relink:{aid}"));
+            }
         }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Go To"))).clicked() {
             let _ = app.run("links.goTo", target.clone());
@@ -2439,19 +2444,26 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         }
     });
     ui.horizontal(|ui| {
-        // Choose any file in the folder: missing links are looked up there by name.
+        // Choose any file in the folder: missing links are looked up there by name. In the
+        // browser, which gives no folders, choose the files themselves.
+        let paths = app.services.pick_open.is_some();
+        let hint = if paths { "Pick a file in the folder holding the moved graphics" } else { "Choose the moved graphics (several at once)" };
         if ui
             .button(crate::i18n::tr(&app.ui.language, "Relink to Folder…"))
             .on_hover_ui(|ui| {
-                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Pick a file in the folder holding the moved graphics"));
+                crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, hint));
             })
             .clicked()
-            && let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink"))
-            && let Some(dir) = std::path::Path::new(&path).parent()
         {
-            let r = app.run("links.relinkFolder", json!({"dir": dir.to_string_lossy()}));
-            if let Ok(v) = r {
-                app.status(crate::i18n::tr(&app.ui.language, "Relinked {count}").replace("{count}", &v["relinked"].to_string()));
+            if !paths {
+                app.request_files("relinkFiles");
+            } else if let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink"))
+                && let Some(dir) = std::path::Path::new(&path).parent()
+            {
+                let r = app.run("links.relinkFolder", json!({"dir": dir.to_string_lossy()}));
+                if let Ok(v) = r {
+                    app.status(crate::i18n::tr(&app.ui.language, "Relinked {count}").replace("{count}", &v["relinked"].to_string()));
+                }
             }
         }
     });

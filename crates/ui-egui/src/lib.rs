@@ -1013,6 +1013,16 @@ impl DesignApp {
         Ok(Value::Null)
     }
 
+    /// Ask an asynchronous host (web) for files for `purpose`; they arrive through the inbox.
+    /// `relink:{asset}` relinks that graphic from the chosen file; `relinkFiles` relinks every
+    /// missing graphic from the chosen files of the same names.
+    pub fn request_files(&mut self, purpose: &str) {
+        let request = self.import_request(purpose);
+        if let Some(open) = self.services.open_async.as_mut() {
+            open(request);
+        }
+    }
+
     pub fn import_request(&self, purpose: &str) -> ImportRequest {
         ImportRequest { purpose: purpose.into(), target: self.session.active().map(|d| d.uid) }
     }
@@ -1057,6 +1067,7 @@ impl DesignApp {
         }
         let Some(inbox) = self.services.inbox.clone() else { return };
         let files = std::mem::take(&mut *inbox.lock().unwrap_or_else(|e| e.into_inner()));
+        let files = self.relink_from_inbox(files);
         for file in files {
             if self.ui.dialog.is_some() {
                 self.status(
@@ -1070,6 +1081,66 @@ impl DesignApp {
                 self.status(format!("{name}: {e}"));
             }
         }
+    }
+
+    /// Relink graphics from delivered files, returning the files left to import. Files chosen
+    /// to relink (`relink:{asset}`, `relinkFiles`) and dropped images named like a missing
+    /// graphic of the document they were dropped on relink, each request's files in one undo
+    /// step; other dropped files are placed or opened as before.
+    fn relink_from_inbox(&mut self, files: Vec<ImportedFile>) -> Vec<ImportedFile> {
+        let mut rest = Vec::new();
+        // (request, files) in arrival order; a request's files arrive together.
+        let mut batches: Vec<(ImportRequest, Vec<ImportedFile>)> = Vec::new();
+        for file in files {
+            let relink = file.request.purpose.starts_with("relink")
+                || (file.request.purpose == "drop"
+                    && file.request.target.is_some()
+                    && !opens_as_document(&file.name)
+                    && designcraft_render::image_size(&file.bytes).is_some());
+            if !relink {
+                rest.push(file);
+                continue;
+            }
+            match batches.iter_mut().find(|(r, _)| r.purpose == file.request.purpose && r.target == file.request.target) {
+                Some((_, b)) => b.push(file),
+                None => batches.push((file.request.clone(), vec![file])),
+            }
+        }
+        for (request, batch) in batches {
+            let drop = request.purpose == "drop";
+            if self.activate_import_target(&request).is_err() {
+                if drop {
+                    rest.extend(batch);
+                }
+                continue;
+            }
+            let list: Vec<Value> =
+                batch.iter().map(|f| json!({"name": f.name, "base64": designcraft_engine::cmd::base64_encode(&f.bytes)})).collect();
+            let mut params = json!({"files": list});
+            if let Some(aid) = request.purpose.strip_prefix("relink:").and_then(|a| a.parse::<u64>().ok()) {
+                params["asset"] = json!(aid);
+            }
+            match self.run("links.relinkFiles", params) {
+                Ok(v) => {
+                    let n = v["relinked"].as_u64().unwrap_or(0);
+                    if n > 0 || !drop {
+                        self.status(crate::i18n::tr(&self.ui.language, "Relinked {count}").replace("{count}", &n.to_string()));
+                    }
+                    // Dropped images that named no missing graphic are placed as before.
+                    if drop {
+                        let unused: Vec<&str> = v["unused"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                        rest.extend(batch.into_iter().filter(|f| unused.iter().any(|u| file_name_of(&f.name) == *u)));
+                    }
+                }
+                Err(e) => {
+                    self.status(e);
+                    if drop {
+                        rest.extend(batch);
+                    }
+                }
+            }
+        }
+        rest
     }
 
     fn import_file(&mut self, file: ImportedFile) -> Result<Value, String> {
@@ -1717,6 +1788,11 @@ pub fn cjk_features(app: &DesignApp) -> bool {
 
 /// Files that open as documents (when dropped or picked) rather than being placed: DesignCraft,
 /// IDML, and InDesign documents and templates (converted to IDML on open).
+/// The last component of a delivered file's name (either kind of separator).
+fn file_name_of(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
 pub fn opens_as_document(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     [".designcraft", ".idml", ".indd", ".indt"].iter().any(|ext| n.ends_with(ext))
@@ -2800,6 +2876,57 @@ mod browser_import_tests {
         app.run("file.new", json!({"title": "A"})).unwrap();
         app
     }
+    /// The placed graphic's link made missing, as an IDML opened in the browser without its
+    /// Links folder leaves it.
+    fn make_missing(app: &mut DesignApp) -> designcraft_doc::AssetId {
+        let aid = *app.session.doc().unwrap().doc.assets.keys().next().unwrap();
+        app.session
+            .edit(|d, _| {
+                let a = std::sync::Arc::make_mut(d.assets.get_mut(&aid).unwrap());
+                a.link = Some("/Users/someone/Links/a.svg".into());
+                a.name = "a.svg".into();
+                a.data = std::sync::Arc::new(Vec::new());
+                Ok(())
+            })
+            .unwrap();
+        aid
+    }
+    fn items(app: &DesignApp) -> usize {
+        app.session.doc().unwrap().doc.spreads.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// The web build relinks from files it is handed: chosen with Relink to Folder… (several at
+    /// once) or dropped. A dropped image named like a missing graphic relinks it instead of
+    /// being placed; one named like nothing is placed as before.
+    #[test]
+    fn delivered_files_relink_missing_graphics() {
+        let mut app = app();
+        let b64 = designcraft_engine::cmd::base64_encode(&image());
+        app.run("file.place", json!({"name": "a.svg", "base64": b64, "x": 50, "y": 50})).unwrap();
+        let aid = make_missing(&mut app);
+        let n = items(&app);
+        let has_data = |app: &DesignApp| !app.session.doc().unwrap().doc.assets[&aid].data.is_empty();
+        let request = app.import_request("relinkFiles");
+        deliver(&mut app, request, "a.svg", image());
+        assert!(has_data(&app), "{}", app.ui.status);
+        assert_eq!(app.session.doc().unwrap().doc.assets[&aid].link.as_deref(), Some("/Users/someone/Links/a.svg"));
+        make_missing(&mut app);
+        let request = app.import_request("drop");
+        deliver(&mut app, request, "A.SVG", image());
+        assert!(has_data(&app), "a dropped file named like the missing graphic relinks it");
+        assert_eq!(items(&app), n, "nothing new is placed");
+        // Nothing selected, so a placed image gets a frame of its own.
+        app.run("edit.deselectAll", json!({})).unwrap();
+        let request = app.import_request("drop");
+        deliver(&mut app, request, "other.svg", image());
+        assert_eq!(items(&app), n + 1, "a dropped image that names no missing graphic is placed");
+        // Relink… for one graphic: the chosen file, whatever its name.
+        make_missing(&mut app);
+        let request = app.import_request(&format!("relink:{}", aid.0));
+        deliver(&mut app, request, "renamed.svg", image());
+        assert_eq!(app.session.doc().unwrap().doc.assets[&aid].link.as_deref(), Some("renamed.svg"));
+    }
+
     fn deliver(app: &mut DesignApp, request: ImportRequest, name: &str, bytes: Vec<u8>) {
         app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile { request, name: name.into(), bytes });
         app.drain_inbox();
