@@ -2445,9 +2445,9 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         // Choose any file in the folder: missing links are looked up there by name. In the
-        // browser, which gives no folders, choose the files themselves.
+        // browser, which hands over files rather than paths, choose the folder itself.
         let paths = app.services.pick_open.is_some();
-        let hint = if paths { "Pick a file in the folder holding the moved graphics" } else { "Choose the moved graphics (several at once)" };
+        let hint = if paths { "Pick a file in the folder holding the moved graphics" } else { "Choose the folder holding the moved graphics" };
         if ui
             .button(crate::i18n::tr(&app.ui.language, "Relink to Folder…"))
             .on_hover_ui(|ui| {
