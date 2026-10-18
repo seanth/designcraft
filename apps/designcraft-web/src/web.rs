@@ -426,20 +426,25 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             } else {
                 rfd::AsyncFileDialog::new().add_filter("DesignCraft, IDML or InDesign", DOC_EXTS)
             };
-            // Relink to Folder: the browser gives no folders, so the moved files themselves, as many
-            // as are chosen; they arrive together, to relink in one step.
-            let several = request.purpose == "relinkFiles";
+            // Relink to Folder: the browser's folder picker hands over every graphic in the
+            // chosen folder; they arrive together, to relink in one step.
+            if request.purpose == "relinkFiles" {
+                wasm_bindgen_futures::spawn_local(async move {
+                    let files: Vec<ImportedFile> =
+                        pick_folder_files().await.into_iter().map(|(name, bytes)| ImportedFile { request: request.clone(), name, bytes }).collect();
+                    if !files.is_empty() {
+                        inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
+                        ctx.request_repaint();
+                    }
+                });
+                return;
+            }
             wasm_bindgen_futures::spawn_local(async move {
-                let picked = if several { dialog.pick_files().await } else { dialog.pick_file().await.map(|f| vec![f]) };
-                let Some(picked) = picked else {
+                let Some(file) = dialog.pick_file().await else {
                     return;
                 };
-                let mut files = Vec::with_capacity(picked.len());
-                for file in picked {
-                    let bytes = file.read().await;
-                    files.push(ImportedFile { request: request.clone(), name: file.file_name(), bytes });
-                }
-                inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
+                let bytes = file.read().await;
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).push(ImportedFile { request, name: file.file_name(), bytes });
                 ctx.request_repaint();
             });
         })),
@@ -450,6 +455,49 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         inbox: Some(inbox),
         ..Default::default()
     }
+}
+
+/// The most files a chosen folder hands over for relinking.
+const MAX_FOLDER_FILES: u32 = 2000;
+
+/// The graphics in a folder the user chooses with the browser's folder picker (an `<input
+/// type=file webkitdirectory>`, which every current browser supports), with their names. Empty
+/// when the picker is cancelled or can't be shown; files that aren't graphics are skipped.
+async fn pick_folder_files() -> Vec<(String, Vec<u8>)> {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else { return Vec::new() };
+    let Some(input) = document.create_element("input").ok().and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok()) else {
+        return Vec::new();
+    };
+    input.set_type("file");
+    input.set_multiple(true);
+    if input.set_attribute("webkitdirectory", "").is_err() {
+        return Vec::new();
+    }
+    // Settles when files are chosen or the picker is cancelled.
+    let chosen = js_sys::Promise::new(&mut |resolve, _reject| {
+        let done = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            let _ = resolve.call0(&wasm_bindgen::JsValue::UNDEFINED);
+        });
+        let _ = input.add_event_listener_with_callback("change", done.as_ref().unchecked_ref());
+        let _ = input.add_event_listener_with_callback("cancel", done.as_ref().unchecked_ref());
+        done.forget();
+    });
+    input.click();
+    let _ = wasm_bindgen_futures::JsFuture::from(chosen).await;
+    let Some(list) = input.files() else { return Vec::new() };
+    let mut out = Vec::new();
+    for i in 0..list.length().min(MAX_FOLDER_FILES) {
+        let Some(file) = list.get(i) else { continue };
+        let name = file.name();
+        let graphic = name.rsplit_once('.').is_some_and(|(_, ext)| IMAGE_EXTS.iter().any(|e| e.eq_ignore_ascii_case(ext)));
+        if !graphic {
+            continue;
+        }
+        if let Ok(buf) = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+            out.push((name, js_sys::Uint8Array::new(&buf).to_vec()));
+        }
+    }
+    out
 }
 
 /// Trigger a browser download of `bytes` named after the last component of `path`.
