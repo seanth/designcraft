@@ -16,7 +16,8 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the eleven branches below. |
+| `personal` | This build: upstream `main` + the twelve branches below. |
+| `web-relink` | Upstream `main` + the web build relinks graphics from files handed over (one commit). No PR yet. |
 | `xref-edited-text` | Upstream `main` + cross-references keep text typed over them, and break at spaces (one commit). No PR yet. |
 | `inline-objects-under-text` | Upstream `main` + inline objects paint under their frame's text, on screen and in PDF (one commit). No PR yet. |
 | `running-header-order` | Upstream `main` + running headers read a page in text order (one commit). No PR yet. |
@@ -41,6 +42,7 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 
 | Item | Branch / commits | Fixes | Upstream status |
 |---|---|---|---|
+| Web: relink graphics from chosen or dropped files | `web-relink` (`dc81999`) | In the browser, Links › Relink… and Relink to Folder… asked a file dialog for a path the web build doesn't have, so both did nothing, and an IDML opened without its Links folder had no way to get its pictures (and they read OK: upstream now shows them missing). New `links.relinkFiles` relinks from files given by name and bytes, sharing the path relink's code. Relink… picks one file; Relink to Folder… picks many (the Links folder's contents) and relinks every missing picture by name, in one undo step; dropped images named like a missing picture relink it. Tests in the engine and the UI's inbox. The browser-only part (file picker and drop code, `apps/designcraft-web/src/web.rs`) couldn't be compiled here. | Not yet offered upstream. |
 | Cross-references keep their edited text | `xref-edited-text` (`4e263ad`) | InDesign keeps text typed over a cross-reference's generated text, its page number still live. The importer dropped it and generated the text again, so Def-e-nish's *Imaginum Auctores* page (format "Page #: Last, First. \"name.\" YYYY. Volume X, issue Y.") showed the placeholders instead of the credits. Edited text is now kept (only when it no longer reads as its format), written back on IDML export, and dropped when the format changes. A broken link (Officinarum Artes) shows its saved text and page instead of "??". Cross-reference text breaks at its spaces (it broke mid-word). Tests in doc, compose and IDML; the line-break one fails on upstream. | Not yet offered upstream. |
 | Inline pictures don't cover the next line | `inline-objects-under-text` (`afc6d31`) | Anchored objects were painted after all of their frame's text, so an inline picture hanging below its baseline (Def-e-nish page 7: the Flukemunschelfen picture, Y offset −17 pt) covered the top of *Foofie* with its white background. InDesign paints them under the text (its PDF draws the picture before the following lines). Renderer and PDF export now draw them after paragraph shading, before the text. Tests in both fail on upstream and pass with the fix. | Not yet offered upstream. |
 | Running headers read a page in text order | `running-header-order` (`34632c0`) | *First/last on page* sorted a page's entries by height, so a page whose last entry tops column 2 (or whose column 1 starts mid-entry) named the wrong one: Def-e-nish page 2's right header showed *Archangel* (bottom of column 1) instead of *Baas Roma*. Entries now order by their story's first position on the page, then by position in the story, as InDesign does. Its test fails on upstream and passes with the fix. | Not yet offered upstream. |
@@ -104,6 +106,7 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 ## Not yet verified
 
 - **On the Mac:**
+  - `web-relink` (web build): open the dictionary IDML; the Links panel shows its pictures missing. Relink to Folder… → select every file in its Links folder → the pictures appear; one Undo removes them all. Dropping the Links files on the window does the same.
   - `xref-edited-text`: the *Imaginum Auctores* page lists names, years, volumes and issues, with page numbers matching where each picture lands; no line breaks inside a word (except the overlong ones).
   - `inline-objects-under-text`: dictionary page 7, *Foofie* is whole under the Flukemunschelfen picture.
   - `running-header-order`: in the dictionary, page 2's right header reads *Baas Roma*.
@@ -122,6 +125,7 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
     and Open With lists DesignCraft.
 - **The web build**: rebuild and repeat the 2026-10-15 browser check (Save documents as survives a
   reload; ⌘S downloads `.idml`), since upstream changed the download code underneath.
+- **The web build compiles `web-relink`'s browser code** (multi-file picker, drops delivered together): not compiled here.
 - **The wasm check** (`xtask wasm`) for `flexible-word-spacing`: the wasm target can't be
   downloaded here. The change is plain arithmetic in the line breaker, so the web build should
   compile; building the web package checks it.

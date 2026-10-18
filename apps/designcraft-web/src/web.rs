@@ -366,19 +366,23 @@ impl eframe::App for WebShell {
         let graphics = self.graphics.clone();
         let _ = graphics.run_if_healthy(|| {
             let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-            for f in dropped {
+            if !dropped.is_empty() {
                 let request = self.app.import_request("drop");
                 let inbox = self.inbox.clone();
                 let ctx = ctx.clone();
+                // Read every dropped file before delivering any: dropped graphics that relink
+                // missing links relink together, in one undo step.
                 wasm_bindgen_futures::spawn_local(async move {
-                    let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
-                    match f.bytes_async().await {
-                        Ok(bytes) => {
-                            inbox.lock().unwrap_or_else(|e| e.into_inner()).push(ImportedFile { request, name, bytes });
-                            ctx.request_repaint();
+                    let mut files = Vec::with_capacity(dropped.len());
+                    for f in dropped {
+                        let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
+                        match f.bytes_async().await {
+                            Ok(bytes) => files.push(ImportedFile { request: request.clone(), name, bytes }),
+                            Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
                         }
-                        Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
                     }
+                    inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
+                    ctx.request_repaint();
                 });
             }
             self.app.logic(ctx);
@@ -417,17 +421,25 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             let ctx = ctx.clone();
             let dialog = if request.purpose == "swatches" {
                 rfd::AsyncFileDialog::new().add_filter("Swatch Exchange (ASE)", &["ase"])
-            } else if request.purpose == "place" {
+            } else if request.purpose == "place" || request.purpose.starts_with("relink") {
                 rfd::AsyncFileDialog::new().add_filter("Graphics", IMAGE_EXTS)
             } else {
                 rfd::AsyncFileDialog::new().add_filter("DesignCraft, IDML or InDesign", DOC_EXTS)
             };
+            // Relink to Folder: the browser gives no folders, so the moved files themselves, as many
+            // as are chosen; they arrive together, to relink in one step.
+            let several = request.purpose == "relinkFiles";
             wasm_bindgen_futures::spawn_local(async move {
-                let Some(file) = dialog.pick_file().await else {
+                let picked = if several { dialog.pick_files().await } else { dialog.pick_file().await.map(|f| vec![f]) };
+                let Some(picked) = picked else {
                     return;
                 };
-                let bytes = file.read().await;
-                inbox.lock().unwrap_or_else(|e| e.into_inner()).push(ImportedFile { request, name: file.file_name(), bytes });
+                let mut files = Vec::with_capacity(picked.len());
+                for file in picked {
+                    let bytes = file.read().await;
+                    files.push(ImportedFile { request: request.clone(), name: file.file_name(), bytes });
+                }
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
                 ctx.request_repaint();
             });
         })),
