@@ -370,68 +370,6 @@ fn a_rescan_does_not_cache_an_older_in_flight_glyph_miss() {
     std::fs::remove_dir_all(db.font_dirs.first().unwrap()).unwrap();
 }
 
-/// The catalog generation moves on when a rescan finds fonts installed or removed, and only then
-/// (the app composes again when it changes, #547).
-#[test]
-fn a_rescan_changes_the_generation_only_when_the_fonts_change() {
-    use crate::testing::font_with;
-    let dir = font_dir("generation");
-    let db = FontDb::with_font_dirs(vec![dir.clone()]);
-    db.load_system_fonts();
-    let first = db.catalog_generation();
-    assert!(first > 0, "the first scan counts as a change");
-    db.load_system_fonts();
-    assert_eq!(db.catalog_generation(), first, "nothing installed: no change");
-    let family = "Installed While Running";
-    std::fs::write(dir.join("Later.ttf"), font_with(family, &['a']).unwrap()).unwrap();
-    db.load_system_fonts();
-    let installed = db.catalog_generation();
-    assert!(installed > first && has(&db.families(), family));
-    std::fs::remove_file(dir.join("Later.ttf")).unwrap();
-    db.load_system_fonts();
-    assert!(db.catalog_generation() > installed, "a removed font is a change too");
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// A rescan reuses what it knows of unchanged files and reads a file that changed again.
-#[test]
-fn a_rescan_reads_a_replaced_font_file_again() {
-    use crate::testing::font_with;
-    let dir = font_dir("replaced");
-    let db = FontDb::with_font_dirs(vec![dir.clone()]);
-    std::fs::write(dir.join("Swap.ttf"), font_with("Before Swap", &['a']).unwrap()).unwrap();
-    assert_eq!(db.load_system_fonts(), 3);
-    assert!(has(&db.families(), "Before Swap") && has(&db.families(), FAMILY));
-    // Same file name, another font (and length).
-    std::fs::write(dir.join("Swap.ttf"), font_with("After The Swap", &['a', 'b']).unwrap()).unwrap();
-    assert_eq!(db.load_system_fonts(), 3);
-    let families = db.families();
-    assert!(has(&families, "After The Swap") && !has(&families, "Before Swap") && has(&families, FAMILY), "{families:?}");
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// What the app runs when its window regains focus: a background rescan that finds a font
-/// installed while it was running (#547).
-#[test]
-fn a_background_rescan_finds_a_font_installed_while_running() {
-    use crate::testing::font_with;
-    let dir = font_dir("focus");
-    let db: &'static FontDb = Box::leak(Box::new(FontDb::with_font_dirs(vec![dir.clone()])));
-    db.load_system_fonts();
-    let before = db.catalog_generation();
-    let family = "Installed From Font Book";
-    std::fs::write(dir.join("New.ttf"), font_with(family, &['a']).unwrap()).unwrap();
-    db.rescan_in_background();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while db.is_rescanning() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(!db.is_rescanning(), "the rescan finishes");
-    assert!(db.catalog_generation() > before);
-    assert!(has(&db.families(), family));
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
 #[test]
 fn installed_and_loaded_fonts_are_found_by_postscript_name() {
     let dir = std::env::temp_dir().join(format!("dc-sysfonts-postscript-{}", std::process::id()));
@@ -450,4 +388,54 @@ fn installed_and_loaded_fonts_are_found_by_postscript_name() {
     // A family name isn't a PostScript name.
     assert_eq!(db.postscript_face("Source Serif 4"), None);
     assert_eq!(db.postscript_face("NoSuchFont-Regular"), None);
+}
+
+/// Write `font` to `path` with a modification time `secs` from now, so a rewrite of the same
+/// length still reads as changed however coarse the file system's clock.
+fn write_font(path: &Path, font: &[u8], secs: u64) {
+    std::fs::write(path, font).unwrap();
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(secs)).unwrap();
+}
+
+#[test]
+fn reloading_reads_changed_font_files_again_and_keeps_the_others() {
+    use crate::testing::font_with_glyph;
+    let dir = font_dir("reload");
+    let family = "DC Test Reloaded";
+    let path = dir.join("Reloaded.ttf");
+    write_font(&path, &font_with_glyph(family, &['a'], 'W').unwrap(), 10);
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    let before = db.face(family, "Regular");
+    let wide = before.advance(before.glyph_for('a'));
+    let kept = db.face(FAMILY, "Regular");
+    // The font is edited and installed again under the same name (#328).
+    write_font(&path, &font_with_glyph(family, &['a'], 'i').unwrap(), 20);
+    assert_eq!(db.face(family, "Regular").id(), before.id(), "a lookup alone doesn't read the file again");
+    let reloaded = db.reload_fonts();
+    assert_eq!(reloaded.changed, std::slice::from_ref(&path));
+    assert_eq!(reloaded.cataloged, 3);
+    let after = db.face(family, "Regular");
+    assert_ne!(after.id(), before.id());
+    let narrow = after.advance(after.glyph_for('a'));
+    assert!(narrow < wide, "the edited font sets 'a' as its i: {narrow} vs {wide}");
+    assert_eq!(db.face(FAMILY, "Regular").id(), kept.id(), "unchanged files aren't read again");
+    assert_eq!(db.reload_fonts().changed, Vec::<PathBuf>::new(), "nothing changed since");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn reloading_lets_go_of_removed_fonts_and_finds_new_ones() {
+    let dir = font_dir("reload-removed");
+    let removed = dir.join("Removed.ttf");
+    write_font(&removed, &crate::testing::font_with("DC Test Removed", &['a']).unwrap(), 10);
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    assert_eq!(db.face("DC Test Removed", "Regular").family, "DC Test Removed");
+    std::fs::remove_file(&removed).unwrap();
+    write_font(&dir.join("Added.ttf"), &crate::testing::font_with("DC Test Added Later", &['a']).unwrap(), 10);
+    assert_eq!(db.reload_fonts().changed, [removed]);
+    assert!(!db.has_family("DC Test Removed"));
+    assert_eq!(db.face("DC Test Removed", "Regular").family, FALLBACK_FAMILY);
+    assert!(db.has_family("DC Test Added Later"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
