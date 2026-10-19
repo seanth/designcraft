@@ -396,4 +396,41 @@ mod tests {
         assert_eq!(idx.value("Heading", false, designcraft_doc::vars::Use::FirstOnPage, 0), "Alpha");
         assert_eq!(idx.value("Heading", false, designcraft_doc::vars::Use::LastOnPage, 0), "Gamma");
     }
+    /// Stories on one page are ordered by where each one's text starts there: a story whose first
+    /// heading sits low in its first column comes after another story's heading above it, even
+    /// though its later column starts higher still.
+    #[test]
+    fn running_header_orders_stories_by_their_first_heading() {
+        use designcraft_doc::story::COLUMN_BREAK;
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 1, "facingPages": false})).unwrap();
+        s.execute("style.paragraph.create", &json!({"name": "Heading"})).ok();
+        // Story A, two columns: filler, then Alpha low in column 1; Gamma at the top of column 2.
+        let a_text = format!("{}Alpha{COLUMN_BREAK}\nGamma\ny", "x\n".repeat(8));
+        let a = s.execute("frame.create", &json!({"rect": [72, 72, 300, 400], "content": "text", "text": a_text})).unwrap();
+        s.execute("object.textFrameOptions", &json!({"ids": [a["id"]], "columns": 2, "gutter": 12})).unwrap();
+        // Story B beside it: Beta between Gamma's height and Alpha's.
+        let b_text = "Beta".to_string();
+        let b = s.execute("frame.create", &json!({"rect": [320, 120, 560, 160], "content": "text", "text": b_text})).unwrap();
+        let story =
+            |s: &Session, id: &Value| s.doc().unwrap().doc.item(designcraft_doc::ItemId(id.as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+        let (sa, sb) = (story(&s, &a["id"]), story(&s, &b["id"]));
+        for (sid, text, word) in [(sa, &a_text, "Alpha"), (sa, &a_text, "Gamma"), (sb, &b_text, "Beta")] {
+            let at = text.find(word).unwrap();
+            s.execute("text.select", &json!({"story": sid.0, "anchor": at, "focus": at + word.len()})).unwrap();
+            s.execute("style.paragraph.apply", &json!({"name": "Heading"})).unwrap();
+        }
+        s.execute("variables.define", &json!({"name": "Entry", "type": "runningHeader", "style": "Heading"})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let y = |sid, text: &str, word: &str| {
+            let cs = s.cache.get(&d, sid, None);
+            let (fi, _, b, ..) = crate::compose::caret(&cs, text.find(word).unwrap()).unwrap();
+            d.item(cs.frames[fi].frame).unwrap().bounds().y0 + b
+        };
+        let (ya, yg, yb) = (y(sa, &a_text, "Alpha"), y(sa, &a_text, "Gamma"), y(sb, &b_text, "Beta"));
+        assert!(yg < yb && yb < ya, "Gamma {yg} above Beta {yb} above Alpha {ya}");
+        let idx = s.cache.running_index(&d);
+        assert_eq!(idx.value("Heading", false, designcraft_doc::vars::Use::FirstOnPage, 0), "Beta");
+        assert_eq!(idx.value("Heading", false, designcraft_doc::vars::Use::LastOnPage, 0), "Gamma");
+    }
 }

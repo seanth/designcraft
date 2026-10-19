@@ -66,13 +66,15 @@ struct Hit {
 /// second column comes after its first, however high its entries sit), and stories by where their
 /// first entry on the page is (top to bottom, then left to right).
 fn in_page_order(hits: Vec<Hit>) -> Vec<(usize, String)> {
-    let mut first: HashMap<(usize, StoryId), (i64, i64)> = HashMap::new();
+    // Each story on a page is placed by its first hit there in text order (not its highest hit,
+    // which in a later column could put the whole story ahead of another).
+    let mut first: HashMap<(usize, StoryId), (usize, (i64, i64))> = HashMap::new();
     for h in &hits {
         let (page, y, x) = h.at;
-        first.entry((page, h.story)).and_modify(|f| *f = (*f).min((y, x))).or_insert((y, x));
+        first.entry((page, h.story)).and_modify(|f| *f = (*f).min((h.pos, (y, x)))).or_insert((h.pos, (y, x)));
     }
     let mut hits: Vec<_> =
-        hits.into_iter().map(|h| (h.at.0, first.get(&(h.at.0, h.story)).copied().unwrap_or((h.at.1, h.at.2)), h.story, h.pos, h.text)).collect();
+        hits.into_iter().map(|h| (h.at.0, first.get(&(h.at.0, h.story)).map_or((h.at.1, h.at.2), |f| f.1), h.story, h.pos, h.text)).collect();
     hits.sort_by_key(|a| (a.0, a.1, a.2.0, a.3));
     hits.into_iter().map(|(page, _, _, _, text)| (page, text)).collect()
 }
