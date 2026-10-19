@@ -28,6 +28,8 @@ const IMAGE_EXTS: &[&str] = &[
     "idml",
     "designcraft",
 ];
+/// Graphics a relink reads (the image and vector formats placing accepts).
+const GRAPHIC_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "bmp", "psd", "svg", "pdf", "ai"];
 const CANVAS_ID: &str = "designcraft_canvas";
 const LOADING_ID: &str = "designcraft_loading";
 
@@ -399,7 +401,9 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             let ctx = ctx.clone();
             let dialog = if request.purpose == "swatches" {
                 rfd::AsyncFileDialog::new().add_filter("Swatch Exchange (ASE)", &["ase"])
-            } else if request.purpose == "place" || request.purpose.starts_with("relink") {
+            } else if request.purpose.starts_with("relink") {
+                rfd::AsyncFileDialog::new().add_filter("Graphics", GRAPHIC_EXTS)
+            } else if request.purpose == "place" {
                 rfd::AsyncFileDialog::new().add_filter("Graphics", IMAGE_EXTS)
             } else {
                 rfd::AsyncFileDialog::new().add_filter("DesignCraft, IDML or InDesign", DOC_EXTS)
@@ -408,8 +412,11 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             // chosen folder; they arrive together, to relink in one step.
             if request.purpose == "relinkFiles" {
                 wasm_bindgen_futures::spawn_local(async move {
-                    let files: Vec<ImportedFile> =
-                        pick_folder_files().await.into_iter().map(|(name, bytes)| ImportedFile { request: request.clone(), name, bytes }).collect();
+                    let files: Vec<ImportedFile> = pick_folder_files(&request.wanted)
+                        .await
+                        .into_iter()
+                        .map(|(name, bytes)| ImportedFile { request: request.clone(), name, bytes })
+                        .collect();
                     if !files.is_empty() {
                         inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
                         ctx.request_repaint();
@@ -435,13 +442,16 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     }
 }
 
-/// The most files a chosen folder hands over for relinking.
-const MAX_FOLDER_FILES: u32 = 2000;
+/// The most files a chosen folder hands over for relinking, and the most bytes in all.
+const MAX_FOLDER_FILES: usize = 2000;
+const MAX_FOLDER_BYTES: f64 = 1024.0 * 1024.0 * 1024.0;
 
-/// The graphics in a folder the user chooses with the browser's folder picker (an `<input
-/// type=file webkitdirectory>`, which every current browser supports), with their names. Empty
-/// when the picker is cancelled or can't be shown; files that aren't graphics are skipped.
-async fn pick_folder_files() -> Vec<(String, Vec<u8>)> {
+/// The graphics named in `wanted` (lower-case file names; empty: every graphic) in a folder the
+/// user chooses with the browser's folder picker (an `<input type=file webkitdirectory>`, which
+/// every current browser supports), each named by its path in the folder. Only those files are
+/// read, up to [`MAX_FOLDER_FILES`] and [`MAX_FOLDER_BYTES`]; empty when the picker is cancelled
+/// or can't be shown.
+async fn pick_folder_files(wanted: &[String]) -> Vec<(String, Vec<u8>)> {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else { return Vec::new() };
     let Some(input) = document.create_element("input").ok().and_then(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok()) else {
         return Vec::new();
@@ -464,15 +474,27 @@ async fn pick_folder_files() -> Vec<(String, Vec<u8>)> {
     let _ = wasm_bindgen_futures::JsFuture::from(chosen).await;
     let Some(list) = input.files() else { return Vec::new() };
     let mut out = Vec::new();
-    for i in 0..list.length().min(MAX_FOLDER_FILES) {
+    let mut bytes = 0.0;
+    for i in 0..list.length() {
         let Some(file) = list.get(i) else { continue };
         let name = file.name();
-        let graphic = name.rsplit_once('.').is_some_and(|(_, ext)| IMAGE_EXTS.iter().any(|e| e.eq_ignore_ascii_case(ext)));
-        if !graphic {
+        let graphic = name.rsplit_once('.').is_some_and(|(_, ext)| GRAPHIC_EXTS.iter().any(|e| e.eq_ignore_ascii_case(ext)));
+        if !graphic || !(wanted.is_empty() || wanted.contains(&name.to_lowercase())) {
             continue;
         }
+        if out.len() >= MAX_FOLDER_FILES || bytes + file.size() > MAX_FOLDER_BYTES {
+            log::warn!("Relink to Folder: more graphics than can be read at once; the rest are left");
+            break;
+        }
+        bytes += file.size();
+        // Its path within the chosen folder tells same-named files in different folders apart.
+        let path = js_sys::Reflect::get(&file, &wasm_bindgen::JsValue::from_str("webkitRelativePath"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or(name);
         if let Ok(buf) = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-            out.push((name, js_sys::Uint8Array::new(&buf).to_vec()));
+            out.push((path, js_sys::Uint8Array::new(&buf).to_vec()));
         }
     }
     out
