@@ -52,6 +52,9 @@ pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 pub struct ImportRequest {
     pub purpose: String,
     pub target: Option<u64>,
+    /// File names wanted, lower case (Relink to Folder: the missing graphics' names), so the host
+    /// reads only those from a chosen folder. Empty: any.
+    pub wanted: Vec<String>,
 }
 pub struct ImportedFile {
     pub request: ImportRequest,
@@ -1019,14 +1022,24 @@ impl DesignApp {
     /// `relink:{asset}` relinks that graphic from the chosen file; `relinkFiles` relinks every
     /// missing graphic from the chosen files of the same names.
     pub fn request_files(&mut self, purpose: &str) {
-        let request = self.import_request(purpose);
+        let mut request = self.import_request(purpose);
+        if purpose == "relinkFiles" {
+            // Only the missing graphics' files are read from the chosen folder.
+            let rows = self.session.execute("links.list", &json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+            request.wanted = rows
+                .iter()
+                .filter(|r| r["asset"].is_u64() && r["status"] == "missing")
+                .filter_map(|r| r["path"].as_str().or(r["name"].as_str()))
+                .map(|p| file_name_of(p).to_lowercase())
+                .collect();
+        }
         if let Some(open) = self.services.open_async.as_mut() {
             open(request);
         }
     }
 
     pub fn import_request(&self, purpose: &str) -> ImportRequest {
-        ImportRequest { purpose: purpose.into(), target: self.session.active().map(|d| d.uid) }
+        ImportRequest { purpose: purpose.into(), target: self.session.active().map(|d| d.uid), wanted: Vec::new() }
     }
 
     pub(crate) fn activate_import_target(&mut self, request: &ImportRequest) -> Result<(), String> {
@@ -1116,8 +1129,12 @@ impl DesignApp {
                 }
                 continue;
             }
-            let list: Vec<Value> =
-                batch.iter().map(|f| json!({"name": f.name, "base64": designcraft_engine::cmd::base64_encode(&f.bytes)})).collect();
+            // A file from a chosen folder is named by its path in it (which tells same-named
+            // files apart).
+            let list: Vec<Value> = batch
+                .iter()
+                .map(|f| json!({"name": file_name_of(&f.name), "path": f.name, "base64": designcraft_engine::cmd::base64_encode(&f.bytes)}))
+                .collect();
             let mut params = json!({"files": list});
             if let Some(aid) = request.purpose.strip_prefix("relink:").and_then(|a| a.parse::<u64>().ok()) {
                 params["asset"] = json!(aid);
@@ -2906,6 +2923,30 @@ mod browser_import_tests {
     }
     fn items(app: &DesignApp) -> usize {
         app.session.doc().unwrap().doc.spreads.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// Relink to Folder asks the host only for the missing graphics' files, and a chosen folder's
+    /// files arrive named by their paths in it, which tell same-named files apart.
+    #[test]
+    fn relink_to_folder_asks_for_the_missing_names_and_matches_by_path() {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = app();
+        let seen = asked.clone();
+        app.services.open_async = Some(Box::new(move |r: ImportRequest| seen.borrow_mut().push(r)));
+        let b64 = designcraft_engine::cmd::base64_encode(&image());
+        app.run("file.place", json!({"name": "a.svg", "base64": b64, "x": 50, "y": 50})).unwrap();
+        let aid = make_missing(&mut app);
+        app.request_files("relinkFiles");
+        let request = asked.borrow_mut().pop().unwrap();
+        assert_eq!(request.wanted, ["a.svg"]);
+        // The link is /Users/someone/Links/a.svg: the file in a folder named Links is the one.
+        let wrong = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"/>"##.to_vec();
+        for (name, bytes) in [("Volume/Old/a.svg", wrong), ("Volume/Links/a.svg", image())] {
+            app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile { request: request.clone(), name: name.into(), bytes });
+        }
+        app.drain_inbox();
+        let a = &app.session.doc().unwrap().doc.assets[&aid];
+        assert_eq!(*a.data, image(), "the Links folder's file: {}", app.ui.status);
     }
 
     /// The web build relinks from files it is handed: chosen with Relink to Folder… (several at
