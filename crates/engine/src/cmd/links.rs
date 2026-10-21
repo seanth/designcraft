@@ -569,7 +569,10 @@ fn shared_tail(file: &str, link: &str) -> usize {
 /// file named only like two graphics whose links name different files — the graphic is left
 /// missing and reported, rather than given another file's picture. Graphics linking to the same
 /// file share it.
-fn match_files(missing: &[(AssetId, String)], files: &[(String, String)]) -> (Vec<(AssetId, usize)>, Vec<String>, Vec<String>) {
+/// Also returns which files are named like some missing graphic (matched or not), so a file left
+/// ambiguous isn't reported as matching nothing.
+fn match_files(missing: &[(AssetId, String)], files: &[(String, String)]) -> (Vec<(AssetId, usize)>, Vec<String>, Vec<String>, Vec<bool>) {
+    let mut named = vec![false; files.len()];
     let mut chosen = Vec::new();
     let mut not_found = Vec::new();
     let mut ambiguous = Vec::new();
@@ -577,6 +580,11 @@ fn match_files(missing: &[(AssetId, String)], files: &[(String, String)]) -> (Ve
     for (aid, link) in missing {
         let scores: Vec<(usize, usize)> =
             files.iter().enumerate().map(|(k, (_, path))| (k, shared_tail(path, link))).filter(|(_, n)| *n > 0).collect();
+        for (k, _) in &scores {
+            if let Some(n) = named.get_mut(*k) {
+                *n = true;
+            }
+        }
         let best = scores.iter().map(|(_, n)| *n).max().unwrap_or(0);
         let top: Vec<usize> = scores.iter().filter(|(_, n)| *n == best).map(|(k, _)| *k).collect();
         match top.as_slice() {
@@ -599,7 +607,7 @@ fn match_files(missing: &[(AssetId, String)], files: &[(String, String)]) -> (Ve
             chosen.push((*aid, *k));
         }
     }
-    (chosen, not_found, ambiguous)
+    (chosen, not_found, ambiguous, named)
 }
 
 fn relink_files(s: &mut Session, p: &Value) -> Result<Value> {
@@ -632,14 +640,20 @@ fn relink_files(s: &mut Session, p: &Value) -> Result<Value> {
             *u = true;
         }
     } else {
+        let placed = d.used_assets();
+        // Graphics still placed: a replaced graphic kept for undo isn't relinked behind the page.
         let missing: Vec<(AssetId, String)> = d
             .assets
             .values()
-            .filter(|a| status(a, document) == "missing")
+            .filter(|a| placed.contains(&a.id) && status(a, document) == "missing")
             .map(|a| (a.id, a.link.clone().unwrap_or_else(|| a.name.clone())))
             .collect();
-        let chosen;
-        (chosen, not_found, ambiguous) = match_files(&missing, &files);
+        let (chosen, named);
+        (chosen, not_found, ambiguous, named) = match_files(&missing, &files);
+        // A file named like a missing graphic was meant for it, even when left ambiguous.
+        for (u, n) in used.iter_mut().zip(&named) {
+            *u |= *n;
+        }
         for (aid, k) in chosen {
             let (Some(a), Some((name, _)), Some(b64)) = (d.assets.get(&aid), files.get(k), data.get(k)) else { continue };
             fresh.push((aid, relinked_bytes(a, name, super::base64_decode(b64))?));
@@ -1211,6 +1225,31 @@ mod shared_asset_tests {
         (s, a, b)
     }
 
+    /// Only graphics still placed are relinked: a replaced graphic kept for undo is missing too,
+    /// but relinking it would change nothing on the page. The journal keeps the files' names,
+    /// not their contents.
+    #[test]
+    fn relinks_only_placed_graphics_and_journals_no_file_contents() {
+        let (mut s, a, b) = two_missing();
+        // b's frame is deleted: its asset stays (for undo) but nothing shows it.
+        s.edit(|d, _| {
+            for sp in &mut d.spreads {
+                std::sync::Arc::make_mut(sp).items.retain(|it| !matches!(&it.content, Content::Graphic(g) if g.asset == b));
+            }
+            Ok(())
+        })
+        .unwrap();
+        let file = |name: &str| json!({"name": name, "base64": super::super::file::base64_encode(&png(6, 6))});
+        let r = s.execute("links.relinkFiles", &json!({"files": [file("pic0.png"), file("pic1.png")]})).unwrap();
+        assert_eq!(r["relinked"], 1);
+        assert_eq!(r["unused"], json!(["pic1.png"]), "nothing placed is named pic1");
+        let d = &s.doc().unwrap().doc;
+        assert!(!d.assets[&a].data.is_empty() && d.assets[&b].data.is_empty());
+        let (id, params) = s.journal.last().unwrap();
+        assert_eq!(id, "links.relinkFiles");
+        assert!(params["files"].as_array().unwrap().iter().all(|f| f.get("base64").is_none() && f["name"].is_string()), "{params}");
+    }
+
     /// Files of the same name in different folders of a chosen folder: each missing graphic takes
     /// the one whose path ends like its link; where nothing tells them apart, the graphics stay
     /// missing and are reported rather than given another graphic's picture. Graphics linking to
@@ -1235,6 +1274,7 @@ mod shared_asset_tests {
         let r = s.execute("links.relinkFiles", &json!({"files": [file("logo.png", "logo.png", 5), file("logo.png", "logo.png", 6)]})).unwrap();
         assert_eq!(r["relinked"], 0);
         assert_eq!(r["ambiguous"], json!(["logo.png", "logo.png"]));
+        assert_eq!(r["unused"], json!([]), "files named like the graphics were meant for them");
         assert!(s.doc().unwrap().doc.assets[&a].data.is_empty() && s.doc().unwrap().doc.assets[&b].data.is_empty());
         // One file named like both, which link to different files: it can't be both.
         let (mut s, a, _) = missing_with(links);

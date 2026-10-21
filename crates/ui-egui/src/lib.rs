@@ -1032,6 +1032,11 @@ impl DesignApp {
                 .filter_map(|r| r["path"].as_str().or(r["name"].as_str()))
                 .map(|p| file_name_of(p).to_lowercase())
                 .collect();
+            // Nothing to relink: don't have the host read a whole folder for nothing.
+            if request.wanted.is_empty() {
+                self.status(crate::i18n::tr(&self.ui.language, "No missing graphics to relink"));
+                return;
+            }
         }
         if let Some(open) = self.services.open_async.as_mut() {
             open(request);
@@ -1142,7 +1147,16 @@ impl DesignApp {
             match self.run("links.relinkFiles", params) {
                 Ok(v) => {
                     let n = v["relinked"].as_u64().unwrap_or(0);
-                    if n > 0 || !drop {
+                    let unsure = v["ambiguous"].as_array().map_or(0, Vec::len);
+                    if unsure > 0 {
+                        // Files named like graphics they couldn't be told apart for: neither
+                        // relinked nor placed.
+                        self.status(
+                            crate::i18n::tr(&self.ui.language, "Relinked {count}; {unsure} left missing: same-named files couldn't be told apart")
+                                .replace("{count}", &n.to_string())
+                                .replace("{unsure}", &unsure.to_string()),
+                        );
+                    } else if n > 0 || !drop {
                         self.status(crate::i18n::tr(&self.ui.language, "Relinked {count}").replace("{count}", &n.to_string()));
                     }
                     // Dropped images that named no missing graphic are placed as before.
@@ -1805,13 +1819,13 @@ pub fn cjk_features(app: &DesignApp) -> bool {
     app.session.prefs.cjk_features.unwrap_or_else(|| i18n::is_cjk(&app.ui.language))
 }
 
-/// Files that open as documents (when dropped or picked) rather than being placed: DesignCraft,
-/// IDML, and InDesign documents and templates (converted to IDML on open).
 /// The last component of a delivered file's name (either kind of separator).
 fn file_name_of(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
+/// Files that open as documents (when dropped or picked) rather than being placed: DesignCraft,
+/// IDML, and InDesign documents and templates (converted to IDML on open).
 pub fn opens_as_document(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     [".designcraft", ".idml", ".indd", ".indt"].iter().any(|ext| n.ends_with(ext))
@@ -2923,6 +2937,20 @@ mod browser_import_tests {
     }
     fn items(app: &DesignApp) -> usize {
         app.session.doc().unwrap().doc.spreads.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// With no missing graphic, Relink to Folder doesn't ask the host for a folder at all.
+    #[test]
+    fn relink_to_folder_needs_a_missing_graphic() {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = app();
+        let seen = asked.clone();
+        app.services.open_async = Some(Box::new(move |r: ImportRequest| seen.borrow_mut().push(r)));
+        let b64 = designcraft_engine::cmd::base64_encode(&image());
+        app.run("file.place", json!({"name": "a.svg", "base64": b64, "x": 50, "y": 50})).unwrap();
+        app.request_files("relinkFiles");
+        assert!(asked.borrow().is_empty());
+        assert_eq!(app.ui.status, "No missing graphics to relink");
     }
 
     /// Relink to Folder asks the host only for the missing graphics' files, and a chosen folder's
