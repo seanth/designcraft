@@ -4,7 +4,7 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-19. Based on upstream `main` at `443ea46` (0.9.0 plus #1184, #1196 and #1163).
+Last updated: 2026-10-21. Based on upstream `main` at `e2a2502` (0.11.0).
 
 `personal` is rebuilt from upstream `main` whenever upstream merges something it carried
 (2026-10-13, 14, 15 and 16). Each rebuild is joined to the previous `personal` history with a
