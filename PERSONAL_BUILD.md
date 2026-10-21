@@ -16,7 +16,7 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
 | `personal` | This build: upstream `main` + the nine branches below. |
-| `web-relink` | Upstream `main` + the web build relinks graphics from files handed over. PR [#1244](https://github.com/storytold/designcraft/pull/1244) (review fixes 2026-10-19: same-named files told apart by their folder, only missing graphics read). |
+| `web-relink` | Upstream `main` + the web build relinks graphics from files handed over. PR [#1244](https://github.com/storytold/designcraft/pull/1244) (review fixes 2026-10-19: same-named files told apart by their folder, only missing graphics read; 2026-10-21: 256 MiB folder cap, no file data in the journal, only placed graphics relink, ambiguous files not placed; approved by FredApps). |
 | `xref-edited-text` | Upstream `main` + cross-references keep text typed over them, and break at spaces (one commit). No PR yet. |
 | `inline-objects-under-text` | Upstream `main` + inline objects paint under their frame's text, on screen and in PDF. PR [#1238](https://github.com/storytold/designcraft/pull/1238) (review: does an anchored object fade with a semi-transparent frame? Checked in InDesign 2026-10-19: a text frame at 50% fades its text and its inline pictures alike, as the PR draws them; test added). |
 | `running-header-order` | Upstream `main` + running headers read a page in text order. PR [#1233](https://github.com/storytold/designcraft/pull/1233) (review fix 2026-10-19: stories placed by their first heading on the page). |

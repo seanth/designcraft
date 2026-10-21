@@ -466,7 +466,9 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
 
 /// The most files a chosen folder hands over for relinking, and the most bytes in all.
 const MAX_FOLDER_FILES: usize = 2000;
-const MAX_FOLDER_BYTES: f64 = 1024.0 * 1024.0 * 1024.0;
+// The bytes are copied a few times on the way (base64 for the command, then decoded), so the
+// cap keeps the peak well inside the browser's memory for a tab.
+const MAX_FOLDER_BYTES: f64 = 256.0 * 1024.0 * 1024.0;
 
 /// The graphics named in `wanted` (lower-case file names; empty: every graphic) in a folder the
 /// user chooses with the browser's folder picker (an `<input type=file webkitdirectory>`, which
