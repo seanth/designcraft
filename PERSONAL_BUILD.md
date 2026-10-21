@@ -24,7 +24,7 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | `inline-object-select` | Upstream `main` + inline (anchored) images selected and resized with the Selection tool (four commits). PR [#1195](https://github.com/storytold/designcraft/pull/1195). |
 | `flexible-word-spacing` | Upstream `main` + Preferences › Composition › Word Spacing below Minimum (one commit). PR [#1190](https://github.com/storytold/designcraft/pull/1190). |
 | `idml-app-icon-drop` | Upstream `main` + `.idml` files can be dropped on the macOS app icon when InDesign is installed (one commit). PR [#1183](https://github.com/storytold/designcraft/pull/1183) (a gap in #417). |
-| `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). Started as personal only; offered upstream as PR [#1105](https://github.com/storytold/designcraft/pull/1105). |
+| `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). Started as personal only; offered upstream as PR [#1105](https://github.com/storytold/designcraft/pull/1105) (approved by FredApps; CodeRabbit fixes 2026-10-21: web prefs retried until stored, IDML export of the unfilled template during a data-merge preview, dotted names get the chosen extension). |
 
 Each branch is based on upstream `main` and merged into `personal` from there. Never open an
 upstream PR from `personal` or `main`. Every branch above passes the checks on its own.
