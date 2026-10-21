@@ -28,7 +28,10 @@ pub fn specs() -> Vec<CommandSpec> {
 fn export_idml(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let opts = designcraft_idml::ExportOptions { embed_images: p.get("embedImages").and_then(Value::as_bool).unwrap_or(true) };
-    let bytes = designcraft_idml::export_idml_with(&st.doc, &opts);
+    // A data-merge preview's fill is session state: the unfilled template is exported (as
+    // `file.serialize` and the saves write it).
+    let doc = st.preview_stash.as_deref().unwrap_or(st.doc.as_ref());
+    let bytes = designcraft_idml::export_idml_with(doc, &opts);
     match str_param(p, "path") {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -377,6 +380,24 @@ fn without_document_extension(name: &str) -> &str {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::sync::Arc;
+
+    /// During a data-merge preview, Export IDML (which the web build's Save uses with IDML chosen)
+    /// writes the unfilled template, as Save does: the preview's fill is session state.
+    #[test]
+    fn idml_export_during_a_data_merge_preview_writes_the_template() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 200], "content": "text", "text": ""})).unwrap();
+        let sid = s.doc().unwrap().doc.item(designcraft_doc::ItemId(r["id"].as_u64().unwrap())).unwrap().text_frame().unwrap().story;
+        s.execute("data.source.select", &json!({"bytes": crate::cmd::base64_encode(b"x\nfilled-record\n"), "name": "d.csv"})).unwrap();
+        s.execute("data.placeholder.add", &json!({"field": "x", "story": sid.0, "at": 0})).unwrap();
+        s.execute("data.preview", &json!({"record": 1})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(sid).unwrap().text, "filled-record");
+        let b64 = s.execute("file.exportIdml", &json!({})).unwrap()["base64"].as_str().unwrap().to_string();
+        let back = designcraft_idml::import_idml(&crate::cmd::base64_decode(&b64)).unwrap();
+        assert!(back.stories.values().all(|st| !st.text.contains("filled-record")), "the preview's fill isn't exported");
+        assert_eq!(s.doc().unwrap().doc.story(sid).unwrap().text, "filled-record", "the preview stays on screen");
+    }
 
     use super::*;
 
