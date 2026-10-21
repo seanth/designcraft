@@ -393,9 +393,12 @@ impl eframe::App for WebShell {
         if self.prefs_sync.due(ctx.input(|i| i.time))
             && let Some(json) = self.prefs_sync.changed(&self.app.session.prefs)
             && let Some(storage) = local_storage()
-            && let Err(e) = storage.set_item(prefs_store::KEY, &json)
         {
-            log::warn!("couldn't keep the preferences in local storage: {e:?}");
+            // Counted as stored only once written; otherwise it's tried again at the next check.
+            match storage.set_item(prefs_store::KEY, &json) {
+                Ok(()) => self.prefs_sync.stored(json),
+                Err(e) => log::warn!("couldn't keep the preferences in local storage: {e:?}"),
+            }
         }
     }
 

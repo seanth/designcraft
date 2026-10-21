@@ -2638,11 +2638,17 @@ fn clipped_submenu<'a, R>(
     (response, inner)
 }
 
-/// A path the save dialog returned, with `ext` (the Save documents as format) added when the name
-/// has no extension of its own: "Brochure" saves as "Brochure.idml". A name with one is kept as
-/// typed; its extension decides the format (see `file.save`).
+/// A path the save dialog returned, with `ext` (the Save documents as format) added unless the name
+/// already ends in `.idml` or `.designcraft`: "Brochure" and "Issue 3.1" save as "Brochure.idml"
+/// and "Issue 3.1.idml". A name with one of those is kept as typed; its extension decides the
+/// format (see `file.save`).
 fn with_save_extension(path: &str, ext: &str) -> String {
-    if std::path::Path::new(path).extension().is_some() { path.to_string() } else { format!("{path}.{ext}") }
+    // Only the two save extensions count as typed: "Issue 3.1" is a name with a dot in it.
+    let typed = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("idml") || e.eq_ignore_ascii_case(designcraft_engine::SaveFormat::Designcraft.extension()));
+    if typed { path.to_string() } else { format!("{path}.{ext}") }
 }
 
 /// A native menu bar item was chosen (macOS): like [`activate`], except that the menu bar takes
@@ -5750,6 +5756,10 @@ mod save_format_tests {
         assert_eq!(super::with_save_extension("/a/Brochure", "idml"), "/a/Brochure.idml");
         assert_eq!(super::with_save_extension("/a/Brochure.idml", "designcraft"), "/a/Brochure.idml");
         assert_eq!(super::with_save_extension("/a/Brochure.designcraft", "idml"), "/a/Brochure.designcraft");
+        assert_eq!(super::with_save_extension("/a/Brochure.IDML", "designcraft"), "/a/Brochure.IDML");
+        // A dot in the name isn't an extension: the chosen format is added.
+        assert_eq!(super::with_save_extension("/a/Issue 3.1", "idml"), "/a/Issue 3.1.idml");
+        assert_eq!(super::with_save_extension("/a/v1.2 Brochure", "designcraft"), "/a/v1.2 Brochure.designcraft");
     }
     /// The web build saves by download: the download is named and written in the chosen format.
     #[test]

@@ -39,15 +39,17 @@ impl PrefsSync {
         true
     }
 
-    /// The JSON to store when `prefs` differ from what was last stored; `None` otherwise. The
-    /// value counts as stored once returned (a failed write is not retried until they change).
-    pub(crate) fn changed(&mut self, prefs: &Prefs) -> Option<String> {
+    /// The JSON to store when `prefs` differ from what was last stored; `None` otherwise. Nothing
+    /// counts as stored until [`PrefsSync::stored`] says the write succeeded, so a write that
+    /// fails (or storage that isn't available) is tried again at the next check.
+    pub(crate) fn changed(&self, prefs: &Prefs) -> Option<String> {
         let json = serde_json::to_string(prefs).ok()?;
-        if self.last.as_deref() == Some(json.as_str()) {
-            return None;
-        }
-        self.last = Some(json.clone());
-        Some(json)
+        (self.last.as_deref() != Some(json.as_str())).then_some(json)
+    }
+
+    /// `json` (from [`PrefsSync::changed`]) was written to storage.
+    pub(crate) fn stored(&mut self, json: String) {
+        self.last = Some(json);
     }
 }
 
@@ -78,6 +80,9 @@ mod tests {
         let idml = Prefs { save_format: SaveFormat::Idml, ..Prefs::default() };
         let json = sync.changed(&idml).unwrap();
         assert!(json.contains(r#""saveFormat":"idml""#), "{json}");
+        // The write failed (or storage was unavailable): still pending at the next check.
+        assert_eq!(sync.changed(&idml).as_deref(), Some(json.as_str()), "retried until stored");
+        sync.stored(json);
         assert_eq!(sync.changed(&idml), None, "written once");
         // Nothing stored yet: the first check writes.
         assert!(PrefsSync::new(None).changed(&prefs).is_some());

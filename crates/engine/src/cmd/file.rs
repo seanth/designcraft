@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} — a `.idml` path is written as IDML (images embedded); any other `path` without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} — a `.idml` path is written as IDML (images embedded); any other path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, file_save),
-        cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a path without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
+        cmd!(noundo "file.saveACopy", "Save a Copy…", ["File"], None, "{path} — writes the document without changing which file it is or its unsaved state; a `.idml` path is written as IDML, any other without the .designcraft extension gets it → {path: the file written, bytes}", has_doc, |s, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("file.saveACopy", "missing `path`"))?;
             let path = with_save_extension(path);
             let mut copy = (*s.doc()?.doc).clone();
