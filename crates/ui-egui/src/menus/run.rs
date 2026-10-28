@@ -5,6 +5,19 @@ use super::tables::{CLASSIC_GROUPS, TYPOGRAPHY_GROUPS, workspace_open_panel};
 use super::tree::recent_label;
 use super::{DesignApp, ScreenMode, Value, json};
 
+/// A path the save dialog returned, with `ext` (the Save documents as format) added unless the name
+/// already ends in `.idml` or `.designcraft`: "Brochure" and "Issue 3.1" save as "Brochure.idml"
+/// and "Issue 3.1.idml". A name with one of those is kept as typed; its extension decides the
+/// format (see `file.save`).
+pub(super) fn with_save_extension(path: &str, ext: &str) -> String {
+    // Only the two save extensions count as typed: "Issue 3.1" is a name with a dot in it.
+    let typed = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("idml") || e.eq_ignore_ascii_case(designcraft_engine::SaveFormat::Designcraft.extension()));
+    if typed { path.to_string() } else { format!("{path}.{ext}") }
+}
+
 /// Type › Tabs: float the Tabs panel (placed above the selected text frame) or close it.
 fn toggle_tabs_panel(app: &mut DesignApp) {
     if app.ui.floating.iter().any(|(p, _)| p == "tabs") {
@@ -122,9 +135,10 @@ fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             return run_ui(app, "app.saveDialog", p);
         }
         "app.saveDialog" => {
-            let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).unwrap_or_default();
+            let ext = app.session.prefs.save_format.extension();
+            let name = app.session.active().map(|d| format!("{}.{ext}", d.doc.title)).unwrap_or_default();
             if let Some(path) = app.pick_save(&name) {
-                return Some(app.run("file.saveAs", json!({"path": path})));
+                return Some(app.run("file.saveAs", json!({"path": with_save_extension(&path, ext)})));
             }
             Ok(Value::Null)
         }
@@ -133,9 +147,10 @@ fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(Value::Null)
         }
         "app.saveCopyDialog" => {
-            let name = app.session.active().map(|d| format!("{} copy.designcraft", d.doc.title)).unwrap_or_default();
+            let ext = app.session.prefs.save_format.extension();
+            let name = app.session.active().map(|d| format!("{} copy.{ext}", d.doc.title)).unwrap_or_default();
             if let Some(path) = app.pick_save(&name) {
-                return Some(app.run("file.saveACopy", json!({"path": path})));
+                return Some(app.run("file.saveACopy", json!({"path": with_save_extension(&path, ext)})));
             }
             Ok(Value::Null)
         }
