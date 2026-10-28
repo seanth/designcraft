@@ -390,6 +390,7 @@ mod tests {
             crop: [0.0; 4],
             wrap: Default::default(),
             fill: Default::default(),
+            layer_options: Default::default(),
         };
         s.edit(|d, _| {
             let it = &mut Arc::make_mut(&mut d.story_mut(sid).unwrap().objects[0]).item;
