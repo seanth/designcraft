@@ -1866,7 +1866,7 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog, max_he
                         let cur = d.s("saveFormat");
                         let formats = [("designcraft", "DesignCraft (.designcraft)"), ("idml", "InDesign Markup (.idml)")];
                         let shown = formats.iter().find(|(v, _)| *v == cur).map_or(formats[0].1, |(_, l)| l);
-                        egui::ComboBox::from_id_salt("pref_save_format")
+                        craft_ui::ComboBox::from_id_salt("pref_save_format")
                             .selected_text(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, shown)))
                             .width(220.0)
                             .show_ui(ui, |ui| {
