@@ -159,6 +159,32 @@ fn flex_cost(p: f64, sp: &Spacing) -> Option<f64> {
     Some(l * l * if p < desired { FLEX_SQUEEZE_WEIGHT } else { 1.0 })
 }
 
+/// Paragraph Composer, flexible: the cost of a line `d` points short of its measure (negative:
+/// overfull) whose word spaces are `spaces` points wide at their natural width. A line whose spaces
+/// would be squeezed past [`FLEX_FLOOR`] is infeasible (`feasible` is cleared); `None`: the standard
+/// rating applies.
+fn flex_line_cost(sp: &Spacing, d: f64, spaces: f64, forced: bool, feasible: &mut bool) -> Option<f64> {
+    if forced && d >= 0.0 {
+        Some(0.0)
+    } else if spaces > 1e-9 {
+        let c = flex_cost(flex_spacing(d, spaces, sp), sp);
+        *feasible = c.is_some();
+        c
+    } else if *feasible {
+        Some(if forced { 0.0 } else { FLEX_SPACELESS_COST })
+    } else {
+        None
+    }
+}
+
+/// Paragraph Composer, flexible: the total after a line costing `cost` from node `n`, the sum of
+/// the lines' costs; a hyphen costs its penalty `pp` in the same units (about a line stretched to
+/// 170% at the default Hyphenation weight), twice after a hyphenated line.
+fn flex_total(n: Node, cost: f64, pp: f64, flagged: bool) -> f64 {
+    let hyphen = if flagged && pp > 0.0 { pp / 1000.0 } else { 0.0 };
+    n.demerits + cost + hyphen + if flagged && n.flagged { hyphen } else { 0.0 }
+}
+
 /// Minimum stretch of a word space, as a fraction of its width, for rating lines that stretch
 /// past the maximum word spacing (the default range's 133% − 100%).
 const OVERFLOW_STRETCH: f64 = 0.33;
@@ -802,20 +828,7 @@ fn kp_pass(input: PassInput<'_>) -> Option<Vec<Break>> {
             }
             // Flexible spacing: the line's cost from its word spacing alone (None: the standard
             // rating, for a line without word spaces or an emergency piece).
-            let spaces = sn[b] - n.tn;
-            let flex = if !sp.flexible || it.emergency {
-                None
-            } else if forced && d >= 0.0 {
-                Some(0.0)
-            } else if spaces > 1e-9 {
-                let c = flex_cost(flex_spacing(d, spaces, sp), sp);
-                feasible = c.is_some();
-                c
-            } else if feasible {
-                Some(if forced { 0.0 } else { FLEX_SPACELESS_COST })
-            } else {
-                None
-            };
+            let flex = if sp.flexible && !it.emergency { flex_line_cost(sp, d, sn[b] - n.tn, forced, &mut feasible) } else { None };
             if feasible && !forced {
                 keep.push(a);
             } else {
@@ -827,13 +840,8 @@ fn kp_pass(input: PassInput<'_>) -> Option<Vec<Break>> {
             if flagged && !hyphen_allowed(it, n, sp, &sw, items, target) {
                 continue;
             }
-            let (fit, mut total) = break_demerits(n, r, pp, flagged, sp.kinsoku_priority);
-            if let Some(cost) = flex {
-                // Flexible: the sum of the lines' costs; a hyphen costs its penalty in the same
-                // units (about a line stretched to 170% at the default Hyphenation weight).
-                let hyphen = if flagged && pp > 0.0 { pp / 1000.0 } else { 0.0 };
-                total = n.demerits + cost + hyphen + if flagged && n.flagged { hyphen } else { 0.0 };
-            }
+            let (fit, total) = break_demerits(n, r, pp, flagged, sp.kinsoku_priority);
+            let total = flex.map_or(total, |cost| flex_total(n, cost, pp, flagged));
             let hs = if flagged { (n.hyphens as usize + 1).min(states - 1) } else { 0 };
             let slot = &mut best[fit * states + hs];
             if slot.is_none_or(|(bd, _)| total < bd) {
