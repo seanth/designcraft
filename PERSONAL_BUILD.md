@@ -4,10 +4,10 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-21. Based on upstream `main` at `e2a2502` (0.11.0).
+Last updated: 2026-10-28. Based on upstream `main` at `32119f3` (0.14.0).
 
 `personal` is rebuilt from upstream `main` whenever upstream merges something it carried
-(2026-10-13, 14, 15 and 16). Each rebuild is joined to the previous `personal` history with a
+(2026-10-13, 14, 15, 16 and 28). Each rebuild is joined to the previous `personal` history with a
 merge that keeps the new content, so `git pull` still works and nothing needs a reset.
 
 ## How the branches fit together
@@ -26,7 +26,7 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | `idml-app-icon-drop` | Upstream `main` + `.idml` files can be dropped on the macOS app icon when InDesign is installed (one commit). PR [#1183](https://github.com/storytold/designcraft/pull/1183) (a gap in #417). |
 | `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). Started as personal only; offered upstream as PR [#1105](https://github.com/storytold/designcraft/pull/1105) (approved by FredApps; CodeRabbit fixes 2026-10-21: web prefs retried until stored, IDML export of the unfilled template during a data-merge preview, dotted names get the chosen extension). |
 
-Each branch is based on upstream `main` and merged into `personal` from there. Never open an
+Each branch is based on upstream `main` and merged into `personal` from there. On 2026-10-28 every branch took in upstream 0.14.0, whose clean-up split many large files into modules (`menus.rs`, `canvas.rs`, `ui-egui/src/lib.rs`, IDML import and export, PDF export, `cmd/file.rs`); each branch's change was carried into the new files. Never open an
 upstream PR from `personal` or `main`. Every branch above passes the checks on its own.
 
 To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `personal`.
@@ -74,7 +74,8 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 | Drop caps scale with their point size (ours, `drop-cap-size`) | [#1184](https://github.com/storytold/designcraft/pull/1184), 2026-10-19 |
 | Tool readouts use the document's units (ours, `tool-units`) | [#1196](https://github.com/storytold/designcraft/pull/1196), 2026-10-19 |
 | Fonts installed while running: Type › Reload Fonts | MaridWSH's [#1163](https://github.com/storytold/designcraft/pull/1163), 2026-10-19. Our `font-rescan` (rescan when the window regains focus) is dropped from `personal`; a follow-up that runs upstream's reload on focus is still possible. |
-| macOS: open documents from Finder and the Dock (our `macos-open-documents`) | aiongg's [#417](https://github.com/storytold/designcraft/pull/417) (`11532d9`), written independently the same day, merged 2026-10-16 with the integration branch. Our own PR for it, [#400](https://github.com/storytold/designcraft/pull/400), is still open and can be closed. Its Objective-C code lives in the `fmv-macos-events` crate, so the repo's no-`unsafe` rule is kept. Fixes #211. |
+| macOS: open documents from Finder and the Dock (our `macos-open-documents`) | aiongg's [#417](https://github.com/storytold/designcraft/pull/417) (`11532d9`), written independently the same day, merged 2026-10-16 with the integration branch. Our own PR for it, [#400](https://github.com/storytold/designcraft/pull/400), is still open and can be closed; the `macos-open-documents` branch can be deleted. Its Objective-C code lives in the `fmv-macos-events` crate, so the repo's no-`unsafe` rule is kept. Fixes #211. |
+| macOS text clipboard follow-up: Paste without Formatting from the menu bar reads the system clipboard (our `paste-without-formatting`) | Upstream's own `app/clipboard.rs` does the same by 0.14.0; the branch can be deleted. |
 | Copied objects paste on the spread in view | [#369](https://github.com/storytold/designcraft/pull/369), 2026-10-16 |
 | Pages panel: double-clicking a parent shows that parent | [#635](https://github.com/storytold/designcraft/pull/635), 2026-10-16 |
 | IDML text variables (running headers) | [#301](https://github.com/storytold/designcraft/pull/301), 2026-10-16 |
@@ -118,6 +119,7 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
   - `idml-app-icon-drop`: after installing the rebuilt app, launch it once so macOS re-reads its
     file types; then dropping an `.idml` on the app's icon in Finder (or in Applications) opens it,
     and Open With lists DesignCraft.
+- **The web build after 0.14.0**: upstream rewrote the web shell (`WebShell::logic` and `raw_input_hook`); `save-format`'s preference storage and `web-relink`'s picker and drop code were carried into it but couldn't be compiled here. Build the web package and check Save documents as, Relink to Folder… and dropping the Links files.
 - **The web build**: rebuild and repeat the 2026-10-15 browser check (Save documents as survives a
   reload; ⌘S downloads `.idml`), since upstream changed the download code underneath.
 - **The web build compiles `web-relink`'s browser code** (multi-file picker, drops delivered together): not compiled here.
