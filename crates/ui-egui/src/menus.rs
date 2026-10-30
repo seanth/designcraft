@@ -63,4 +63,6 @@ fn cmd_item(id: &str, params: Value) -> Item {
 }
 
 #[cfg(test)]
+mod save_format_tests;
+#[cfg(test)]
 mod tests;
