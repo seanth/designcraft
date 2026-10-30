@@ -22,14 +22,12 @@ fn choosing_idml_makes_save_suggest_and_write_idml() {
     let dir = tempfile::tempdir().unwrap();
     let typed = dir.path().join("Brochure").to_string_lossy().to_string();
     let suggested = Arc::new(Mutex::new(String::new()));
-    let answer = |seen: Arc<Mutex<String>>, reply: Option<String>| {
-        move |request: &craft_dialogs::Request| {
-            let craft_dialogs::Request::File(dialog) = request else { return craft_dialogs::Answer::Cancelled };
-            *seen.lock().unwrap() = dialog.file_name.clone().unwrap_or_default();
-            reply.clone().map_or(craft_dialogs::Answer::Cancelled, |path| craft_dialogs::Answer::Paths(vec![path.into()]))
-        }
-    };
-    app.answer_dialogs(answer(suggested.clone(), Some(typed)));
+    let seen = suggested.clone();
+    app.answer_dialogs(move |request| {
+        let craft_dialogs::Request::File(dialog) = request else { return craft_dialogs::Answer::Cancelled };
+        *seen.lock().unwrap() = dialog.file_name.clone().unwrap_or_default();
+        craft_dialogs::Answer::Paths(vec![typed.clone().into()])
+    });
     app.run("app.save", json!({})).unwrap();
     app.settle_dialogs();
     assert_eq!(*suggested.lock().unwrap(), "Brochure.idml");
@@ -42,7 +40,12 @@ fn choosing_idml_makes_save_suggest_and_write_idml() {
     assert_eq!(d.fields["saveFormat"], "idml", "the dialog shows the current choice");
     d.fields.insert("saveFormat".into(), json!("designcraft"));
     crate::dialogs::confirm(&mut app).unwrap();
-    app.answer_dialogs(answer(suggested.clone(), None));
+    let seen = suggested.clone();
+    app.answer_dialogs(move |request| {
+        let craft_dialogs::Request::File(dialog) = request else { return craft_dialogs::Answer::Cancelled };
+        *seen.lock().unwrap() = dialog.file_name.clone().unwrap_or_default();
+        craft_dialogs::Answer::Cancelled
+    });
     app.run("app.saveDialog", json!({})).unwrap();
     app.settle_dialogs();
     // Started beside the saved file.
