@@ -45,6 +45,11 @@ pub fn placed(doc: &Document, cache: &Cache, layout: &CanvasLayout, story: Optio
             let [a, b, c, d, _, _] = xf.as_coeffs();
             let turned = b.abs() > 1e-9 || c.abs() > 1e-9 || a <= 0.0 || d <= 0.0;
             for o in &ft.objects {
+                // A locked object (or one on a locked layer) can't be selected, as other items.
+                let it = &o.object.item;
+                if it.locked || doc.layer(it.layer).is_some_and(|l| l.locked) {
+                    continue;
+                }
                 let r = o.object.item.bounds();
                 let r = Affine::translate(o.origin.to_vec2()).transform_rect_bbox(r);
                 let spread_rect = xf.transform_rect_bbox(r);
