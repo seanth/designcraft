@@ -10,7 +10,7 @@ mod export;
 mod invoke;
 mod keys;
 mod quick_apply;
-mod run;
+pub(crate) mod run;
 mod state;
 mod tables;
 mod tree;
