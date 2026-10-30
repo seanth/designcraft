@@ -396,9 +396,12 @@ impl Exporter<'_> {
                     if local != Affine::IDENTITY {
                         s.push_transform(&tf(local));
                     }
-                    self.text_area = (local.determinant().abs() > 1e-12).then(|| local.inverse().transform_rect_bbox(it.inner_bounds()));
+                    // Anchored text frames now draw inside `frame_text`: restore the host's area
+                    // after, so an object drawn there doesn't clear it for the host's glyphs.
+                    let area = (local.determinant().abs() > 1e-12).then(|| local.inverse().transform_rect_bbox(it.inner_bounds()));
+                    let outer = std::mem::replace(&mut self.text_area, area);
                     drawn = self.frame_text(s, &cs, ft, text, Some((xf * local, page)));
-                    self.text_area = None;
+                    self.text_area = outer;
                     if local != Affine::IDENTITY {
                         s.pop();
                     }

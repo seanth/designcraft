@@ -139,6 +139,14 @@ struct Importer<'r> {
     /// Graphic `Self` → stand-in image for a linked file that can't be read.
     previews: &'r HashMap<String, Arc<Vec<u8>>>,
     next_id: u64,
+    /// Cells every table in this import has reserved. One table is capped, but a file chooses
+    /// how many tables it has, so the cap has to be document-wide as well (noted in review).
+    table_cells: usize,
+    /// Tables whose size the file claimed and did not get, warned about so far. A file chooses
+    /// how many tables it has, so a line each is its own flood (noted in review).
+    table_warnings: usize,
+    /// Whether the file has already been told its tables ran out of cells between them.
+    table_budget_spent: bool,
     settings: DocSettings,
     default_margins: Option<(Margins, Columns)>,
     swatches: Vec<Swatch>,
@@ -202,6 +210,8 @@ struct Importer<'r> {
     /// The file's text variables (`None`: it defines none) and their Self → index.
     text_vars: Option<Vec<designcraft_doc::vars::TextVariable>>,
     text_var_ids: HashMap<String, usize>,
+    /// The Self of each cross-reference page number variable (`XrefPageNumberType`).
+    xref_page_vars: HashSet<String>,
     /// Creation and modification times (Unix seconds) from the package metadata.
     created: Option<i64>,
     modified: Option<i64>,
@@ -225,6 +235,9 @@ impl<'r> Importer<'r> {
             read_link,
             previews,
             next_id: 0,
+            table_cells: 0,
+            table_warnings: 0,
+            table_budget_spent: false,
             // InDesign lets justified lines squeeze word spaces below the Minimum: lay its
             // documents out the way it does.
             settings: DocSettings { flexible_word_spacing: true, ..DocSettings::default() },
@@ -274,6 +287,7 @@ impl<'r> Importer<'r> {
             index_xrefs: Vec::new(),
             text_vars: None,
             text_var_ids: HashMap::new(),
+            xref_page_vars: HashSet::new(),
             created: None,
             modified: None,
             repaired_tab_lists: 0,
@@ -601,6 +615,9 @@ impl<'r> Importer<'r> {
         {
             d.settings.zero_point = zp;
         }
+        // Cross-reference text the format generates exactly is generated again; any other was
+        // typed over it and is kept (needs the destinations, resolved above).
+        d.drop_generated_xref_text();
         Ok(d)
     }
 }

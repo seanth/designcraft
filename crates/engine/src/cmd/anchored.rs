@@ -188,6 +188,33 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// `{story, index}`, or the anchored object at (or just before) the text insertion point.
+/// Whether the `k`-th anchored object of story `sid` can't be selected or changed: it, or the text
+/// frame holding it, is locked or on a locked layer (as for other page items).
+fn is_locked(s: &Session, sid: StoryId, k: usize) -> Result<bool> {
+    let d = &s.doc()?.doc;
+    let locked = |it: &designcraft_doc::Item| it.locked || d.layer(it.layer).is_some_and(|l| l.locked);
+    let o = d.story(sid).and_then(|st| st.objects.get(k)).ok_or_else(|| bad("anchored", "no such anchored object"))?;
+    if locked(&o.item) {
+        return Ok(true);
+    }
+    // The frame composition placed it in; before it is placed, any of the story's frames.
+    let cs = s.cache.get(d, sid, None);
+    let host = cs.frames.iter().find(|ft| ft.objects.iter().any(|x| x.index == k)).map(|ft| ft.frame);
+    let frames: Vec<designcraft_doc::ItemId> = match host {
+        Some(f) => vec![f],
+        None => d.story(sid).map(|st| st.frames.clone()).unwrap_or_default(),
+    };
+    Ok(frames.iter().filter_map(|f| d.item(*f)).any(locked))
+}
+
+/// [`is_locked`] as the error a command returns.
+fn check_unlocked(s: &Session, sid: StoryId, k: usize, cmd: &str) -> Result<()> {
+    if is_locked(s, sid, k)? {
+        return Err(bad(cmd, "the anchored object or its frame is locked, or on a locked layer"));
+    }
+    Ok(())
+}
+
 fn object_ref(s: &Session, p: &Value, cmd: &str) -> Result<(StoryId, usize)> {
     if let (Some(sid), Some(k)) = (p.get("story").and_then(Value::as_u64), p.get("index").and_then(Value::as_u64)) {
         return Ok((StoryId(sid), usize::try_from(k).map_err(|_| bad(cmd, "index out of range"))?));
@@ -214,10 +241,11 @@ fn object_ref(s: &Session, p: &Value, cmd: &str) -> Result<(StoryId, usize)> {
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let sid = p.get("story").and_then(Value::as_u64).map(StoryId).ok_or_else(|| bad("anchored.select", "missing story"))?;
     let k = p.get("index").and_then(Value::as_u64).and_then(|k| usize::try_from(k).ok()).ok_or_else(|| bad("anchored.select", "missing index"))?;
-    let st = s.doc_mut()?;
-    if st.doc.story(sid).and_then(|x| x.objects.get(k)).is_none() {
+    if s.doc()?.doc.story(sid).and_then(|x| x.objects.get(k)).is_none() {
         return Err(bad("anchored.select", "no such anchored object"));
     }
+    check_unlocked(s, sid, k, "anchored.select")?;
+    let st = s.doc_mut()?;
     st.selection = designcraft_doc::Selection { anchored: Some(AnchoredSel { story: sid, index: k }), ..Default::default() };
     st.bump_revision();
     Ok(Value::Null)
@@ -229,6 +257,7 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
 /// and the text reflows around the new size.
 fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     let (sid, k) = object_ref(s, p, "anchored.resize")?;
+    check_unlocked(s, sid, k, "anchored.resize")?;
     let from = super::rect_param(p, "from").ok_or_else(|| bad("anchored.resize", "missing from"))?;
     let to = super::rect_param(p, "to").ok_or_else(|| bad("anchored.resize", "missing to"))?;
     let finite = |r: designcraft_geom::Rect| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite());
@@ -251,9 +280,6 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
         let o = st.objects.get_mut(k).ok_or_else(|| bad("anchored.resize", "no such anchored object"))?;
         let o = Arc::make_mut(o);
         let it = &mut o.item;
-        if it.locked {
-            return Err(bad("anchored.resize", "the object is locked"));
-        }
         if content {
             super::object::scale_item(it, m, (sx * sy).sqrt(), strokes);
         } else if matches!(it.content, Content::Group { .. }) {
@@ -279,6 +305,8 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Delete a selected anchored object: its mark leaves the text, and the object with it.
 pub(crate) fn delete(s: &mut Session, a: AnchoredSel) -> Result<Value> {
+    // A locked object keeps its place in the text (Delete does nothing to it, as to a locked item).
+    check_unlocked(s, a.story, a.index, "edit.clear")?;
     let pos = {
         let st = s.doc()?.doc.story(a.story).ok_or_else(|| bad("edit.clear", "no such story"))?;
         st.text.match_indices(OBJECT_MARK).nth(a.index).map(|(i, _)| i).ok_or_else(|| bad("edit.clear", "no such anchored object"))?
@@ -349,6 +377,59 @@ mod tests {
         let r = s.execute("frame.create", &json!({"rect": [450, 450, 474, 490]})).unwrap();
         s.execute("anchored.insert", &json!({"ids": [r["id"]], "story": sid.0, "pos": 7})).unwrap();
         (s, sid)
+    }
+
+    /// A locked anchored object, one on a locked layer, or one in a locked frame or a frame on a
+    /// locked layer can't be selected, resized or deleted: it stays in the text with its marker.
+    #[test]
+    fn locked_anchored_objects_are_left_alone() {
+        type Lock = fn(&mut designcraft_doc::Document, StoryId);
+        let lock_object: Lock = |d, sid| Arc::make_mut(&mut d.story_mut(sid).unwrap().objects[0]).item.locked = true;
+        let lock_object_layer: Lock = |d, sid| {
+            let layer = d.story(sid).unwrap().objects[0].item.layer;
+            d.layers.iter_mut().find(|l| l.id == layer).unwrap().locked = true;
+        };
+        let lock_frame: Lock = |d, sid| {
+            let f = d.story(sid).unwrap().frames[0];
+            d.item_mut(f).unwrap().locked = true;
+        };
+        let lock_frame_layer: Lock = |d, sid| {
+            let f = d.story(sid).unwrap().frames[0];
+            let layer = d.item(f).unwrap().layer;
+            d.layers.iter_mut().find(|l| l.id == layer).unwrap().locked = true;
+        };
+        for (what, lock) in
+            [("object", lock_object), ("its layer", lock_object_layer), ("its frame", lock_frame), ("its frame's layer", lock_frame_layer)]
+        {
+            let (mut s, sid) = inline_box();
+            // Selected before it is locked, so Delete and Resize meet the lock themselves.
+            s.execute("anchored.select", &json!({"story": sid.0, "index": 0})).unwrap();
+            s.edit(|d, _| {
+                lock(d, sid);
+                Ok(Value::Null)
+            })
+            .unwrap();
+            assert!(s.execute("anchored.select", &json!({"story": sid.0, "index": 0})).is_err(), "{what}: select");
+            assert!(s.execute("anchored.resize", &json!({"from": [0, 0, 24, 40], "to": [0, 0, 24, 60]})).is_err(), "{what}: resize");
+            assert!(s.execute("edit.clear", &json!({})).is_err(), "{what}: delete");
+            let st = s.doc().unwrap().doc.story(sid).unwrap().clone();
+            assert_eq!(st.objects.len(), 1, "{what}: the object stays");
+            assert_eq!(st.text.matches(OBJECT_MARK).count(), 1, "{what}: and its marker");
+            assert_eq!(st.objects[0].size(), (24.0, 40.0), "{what}: at its size");
+        }
+    }
+
+    /// Placing a graphic selects the new frame alone: a selected anchored object is deselected.
+    #[test]
+    fn placing_a_graphic_deselects_an_anchored_object() {
+        let (mut s, sid) = inline_box();
+        s.execute("anchored.select", &json!({"story": sid.0, "index": 0})).unwrap();
+        // A video (any bytes: media is placed by its name) gets a media frame of its own.
+        let b64 = crate::cmd::base64_encode(b"not really a video");
+        let r = s.execute("file.place", &json!({"name": "clip.mp4", "base64": b64, "x": 500, "y": 500})).unwrap();
+        let sel = s.doc().unwrap().selection.clone();
+        assert_eq!(sel.items, [ItemId(r["id"].as_u64().unwrap())]);
+        assert_eq!(sel.anchored, None, "not both the new frame and the anchored object");
     }
 
     #[test]

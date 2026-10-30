@@ -77,6 +77,28 @@ fn exports_valid_pdf_with_one_page_per_page() {
 }
 
 #[test]
+fn discretionary_hyphen_pdf_text_follows_visible_breaks() {
+    let text = "Wir möchten uns ganz besonders herzlich bei folgenden Personen bedanken, die auf unterschied\u{ad}lichste Weise zur Entstehung dieses Lehrbuches beigetragen haben:";
+    for composer in [designcraft_doc::Composer::SingleLine, designcraft_doc::Composer::Paragraph] {
+        for (width, expected) in [(430.0, "unterschied-lichste"), (540.0, "unterschiedlichste")] {
+            let mut d = Document::new(&NewDocument::default());
+            let lid = d.default_layer();
+            let para = designcraft_doc::ParaAttrs { composer: Some(composer), hyphenate: Some(false), ..Default::default() };
+            let (_, sid) = d
+                .add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 36.0 + width, 400.0), lid, text, ParaFormat { para, ..Default::default() })
+                .unwrap();
+            d.story_mut(sid).unwrap().format_chars(0..text.len(), |f| f.over.size = Some(9.5));
+            for tagged in [false, true] {
+                let bytes = export_pdf(&d, &Cache::new(), &PdfOptions { tagged, ..Default::default() }).unwrap();
+                let extracted = extract_text(&bytes).concat();
+                assert!(extracted.contains(expected), "{composer:?}, width={width}, tagged={tagged}: {extracted:?}");
+                assert!(!extracted.contains('\u{ad}'));
+            }
+        }
+    }
+}
+
+#[test]
 fn text_is_real_text() {
     let d = doc_with_text("Hello DesignCraft — efficient affine");
     let s = uncompressed(&d, PdfOptions::default());
@@ -810,6 +832,36 @@ fn only_printed_fields_and_buttons_export() {
     assert_eq!(all.matches("/Subtype/Widget").count(), 1, "one field");
     assert!(all.contains("(shown)") && !all.contains("unprinted"), "only the shown field and button");
     assert_eq!(all.matches("/Link").count(), shown.matches("/Link").count(), "only the shown button");
+}
+
+#[test]
+fn form_field_border_follows_the_item_stroke() {
+    use designcraft_doc::{FieldKind, FormField, Shape, Stroke};
+    use designcraft_geom::shapes::rectangle;
+    let export = |stroke: Stroke| {
+        let mut d = Document::new(&NewDocument::default());
+        let lid = d.default_layer();
+        let mut it = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, rectangle(Rect::new(72.0, 72.0, 250.0, 96.0)));
+        it.stroke = stroke;
+        it.form_field = Some(FormField {
+            kind: FieldKind::TextField,
+            name: "name".into(),
+            value: String::new(),
+            options: Vec::new(),
+            multiline: false,
+            required: false,
+            font_size: 0.0,
+        });
+        d.insert_item(SpreadRef::Doc(0), it, None).unwrap();
+        uncompressed(&d, PdfOptions::default())
+    };
+    let none = export(Stroke { weight: 0.0, swatch: designcraft_color::swatch::NONE.into(), ..Stroke::default() });
+    assert!(none.contains("/Subtype/Widget"));
+    assert!(none.contains("/BS<</W 0>>"), "no border width");
+    assert!(!none.contains("/BC"), "no border colour");
+    let stroked = export(Stroke { weight: 1.0, ..Stroke::default() });
+    assert!(stroked.contains("/BS<</W 1"), "border width");
+    assert!(stroked.contains("/BC"), "border colour");
 }
 
 #[test]

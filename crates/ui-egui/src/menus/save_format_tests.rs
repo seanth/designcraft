@@ -23,11 +23,13 @@ fn choosing_idml_makes_save_suggest_and_write_idml() {
     let typed = dir.path().join("Brochure").to_string_lossy().to_string();
     let suggested = Arc::new(Mutex::new(String::new()));
     let seen = suggested.clone();
-    app.services.pick_save = Some(Box::new(move |name: &str| {
-        *seen.lock().unwrap() = name.to_string();
-        Some(typed.clone())
-    }));
+    app.answer_dialogs(move |request| {
+        let craft_dialogs::Request::File(dialog) = request else { return craft_dialogs::Answer::Cancelled };
+        *seen.lock().unwrap() = dialog.file_name.clone().unwrap_or_default();
+        craft_dialogs::Answer::Paths(vec![typed.clone().into()])
+    });
     app.run("app.save", json!({})).unwrap();
+    app.settle_dialogs();
     assert_eq!(*suggested.lock().unwrap(), "Brochure.idml");
     let path = dir.path().join("Brochure.idml");
     assert!(designcraft_idml::is_idml(&std::fs::read(&path).unwrap()));
@@ -39,11 +41,13 @@ fn choosing_idml_makes_save_suggest_and_write_idml() {
     d.fields.insert("saveFormat".into(), json!("designcraft"));
     crate::dialogs::confirm(&mut app).unwrap();
     let seen = suggested.clone();
-    app.services.pick_save = Some(Box::new(move |name: &str| {
-        *seen.lock().unwrap() = name.to_string();
-        None
-    }));
+    app.answer_dialogs(move |request| {
+        let craft_dialogs::Request::File(dialog) = request else { return craft_dialogs::Answer::Cancelled };
+        *seen.lock().unwrap() = dialog.file_name.clone().unwrap_or_default();
+        craft_dialogs::Answer::Cancelled
+    });
     app.run("app.saveDialog", json!({})).unwrap();
+    app.settle_dialogs();
     // Started beside the saved file.
     let suggested = suggested.lock().unwrap().clone();
     assert_eq!(std::path::Path::new(&suggested).file_name().unwrap(), "Brochure.designcraft", "{suggested}");
