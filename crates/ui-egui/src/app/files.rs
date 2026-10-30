@@ -12,7 +12,7 @@ impl DesignApp {
     #[track_caller]
     pub fn pick_and_open(&mut self, purpose: &str) -> Result<Value, String> {
         if let Some(open) = self.services.open_async.as_mut() {
-            let request = ImportRequest { purpose: purpose.into(), target: self.session.active().map(|d| d.uid) };
+            let request = ImportRequest { purpose: purpose.into(), target: self.session.active().map(|d| d.uid), wanted: Vec::new() };
             open(request);
             return Ok(Value::Null);
         }
@@ -47,7 +47,7 @@ impl DesignApp {
         designcraft_engine::cmd::has_doc(&self.session)?;
         if let Some(open) = self.services.open_async.as_mut() {
             let purpose = if kind.is_empty() { "styles".to_string() } else { format!("styles:{kind}") };
-            open(ImportRequest { purpose, target: self.session.active().map(|d| d.uid) });
+            open(ImportRequest { purpose, target: self.session.active().map(|d| d.uid), wanted: Vec::new() });
             return Ok(Value::Null);
         }
         let kind = kind.to_string();
