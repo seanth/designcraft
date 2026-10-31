@@ -4,10 +4,10 @@
 which are not upstream yet. This file lives only on this branch. Update it whenever something is
 added, or whenever upstream merges one of these items and it can be dropped from here.
 
-Last updated: 2026-10-30. Based on upstream `main` at `ea08e4c` (0.14.0 + 113 commits).
+Last updated: 2026-10-31. Based on upstream `main` at `ea214dd`.
 
 `personal` is rebuilt from upstream `main` whenever upstream merges something it carried
-(2026-10-13, 14, 15, 16, 28 and 30). Each rebuild is joined to the previous `personal` history with a
+(2026-10-13, 14, 15, 16, 28, 30 and 31). Each rebuild is joined to the previous `personal` history with a
 merge that keeps the new content, so `git pull` still works and nothing needs a reset.
 
 ## How the branches fit together
@@ -15,15 +15,12 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | Branch | What it is |
 |---|---|
 | `main` | An exact mirror of upstream `main`. Update it only with GitHub's **Sync fork**, and never commit to it. |
-| `personal` | This build: upstream `main` + the eight branches below. |
+| `personal` | This build: upstream `main` + the five branches below. |
 | `web-relink` | Upstream `main` + the web build relinks graphics from files handed over. PR [#1244](https://github.com/storytold/designcraft/pull/1244) (review fixes 2026-10-19: same-named files told apart by their folder, only missing graphics read; 2026-10-21: 256 MiB folder cap, no file data in the journal, only placed graphics relink, ambiguous files not placed; approved by FredApps). |
-| `xref-edited-text` | Upstream `main` + cross-references keep text typed over them, and break at spaces. PR [#1239](https://github.com/storytold/designcraft/pull/1239) (review fixes 2026-10-30: kept unless exactly what the format generates for its destination; page numbers found by their AssociatedTextVariable; text inside tracked changes read). |
-| `parent-page-display` | Upstream `main` + document-page overlays (¶ marks) stay off parent pages while they are edited. PR [#1232](https://github.com/storytold/designcraft/pull/1232) (split in review 2026-10-30: the header placeholders moved to `running-header-placeholder`). |
-| `running-header-placeholder` | Upstream `main` + a running-header variable shows `<Name>` on a parent page itself (only there; text with no page keeps its before/after text). Split from #1232 on 2026-10-30; no PR yet. |
 | `inline-object-select` | Upstream `main` + inline (anchored) images selected and resized with the Selection tool (four commits). PR [#1195](https://github.com/storytold/designcraft/pull/1195) (review fixes 2026-10-30: locked objects, objects on locked layers and objects in locked frames can't be selected, resized or deleted; placing a graphic clears the anchored selection). |
 | `flexible-word-spacing` | Upstream `main` + Preferences › Composition › Word Spacing below Minimum (one commit). PR [#1190](https://github.com/storytold/designcraft/pull/1190). |
-| `idml-app-icon-drop` | Upstream `main` + `.idml` files can be dropped on the macOS app icon when InDesign is installed (one commit). PR [#1183](https://github.com/storytold/designcraft/pull/1183) (a gap in #417). |
 | `save-format` | Upstream `main` + the Save documents as setting (DesignCraft or IDML). Started as personal only; offered upstream as PR [#1105](https://github.com/storytold/designcraft/pull/1105) (approved by FredApps; CodeRabbit fixes 2026-10-21: web prefs retried until stored, IDML export of the unfilled template during a data-merge preview, dotted names get the chosen extension). |
+| `custom-footnote-symbols` | Upstream `main` + footnote marks the user defines (Document Footnote Options › Style › Custom…), each with its own character style. Not yet offered upstream (PR text drafted 2026-10-30). |
 
 Each branch is based on upstream `main` and merged into `personal` from there. On 2026-10-28 every branch took in upstream 0.14.0, whose clean-up split many large files into modules (`menus.rs`, `canvas.rs`, `ui-egui/src/lib.rs`, IDML import and export, PDF export, `cmd/file.rs`); each branch's change was carried into the new files. Never open an
 upstream PR from `personal` or `main`. Every branch above passes the checks on its own.
@@ -37,12 +34,9 @@ To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `
 | Item | Branch / commits | Fixes | Upstream status |
 |---|---|---|---|
 | Web: relink graphics from chosen or dropped files | `web-relink` (`dc81999`) | In the browser, Links › Relink… and Relink to Folder… asked a file dialog for a path the web build doesn't have, so both did nothing, and an IDML opened without its Links folder had no way to get its pictures (and they read OK: upstream now shows them missing). New `links.relinkFiles` relinks from files given by name and bytes, sharing the path relink's code. Relink… picks one file; Relink to Folder… picks many (the Links folder's contents) and relinks every missing picture by name, in one undo step; dropped images named like a missing picture relink it. Tests in the engine and the UI's inbox. The browser-only part (file picker and drop code, `apps/designcraft-web/src/web.rs`) couldn't be compiled here. | Open upstream as [#1244](https://github.com/storytold/designcraft/pull/1244). |
-| Cross-references keep their edited text | `xref-edited-text` (`4e263ad`) | InDesign keeps text typed over a cross-reference's generated text, its page number still live. The importer dropped it and generated the text again, so Def-e-nish's *Imaginum Auctores* page (format "Page #: Last, First. \"name.\" YYYY. Volume X, issue Y.") showed the placeholders instead of the credits. Edited text is now kept (unless it is exactly what the format generates for its destination), written back on IDML export, and dropped when the format changes. A broken link (Officinarum Artes) shows its saved text and page instead of "??". Cross-reference text breaks at its spaces (it broke mid-word). Tests in doc, compose and IDML; the line-break one fails on upstream. | Open upstream as [#1239](https://github.com/storytold/designcraft/pull/1239). |
-| Parent pages: no stray ¶ marks | `parent-page-display` | While parents were edited, document frames weren't laid out and fell back to the canvas origin, which is the right parent page, so every page's hidden characters, spelling squiggles and similar overlays piled up there. Its canvas test fails on upstream and passes with the fix. | Open upstream as [#1232](https://github.com/storytold/designcraft/pull/1232). |
-| Parent pages: running-header placeholders | `running-header-placeholder` | On a parent page a running-header variable had no page to read and came out blank; it now shows `<variable name>`, as InDesign does, on the parent itself only (frames record whether they are on a parent spread). | Split from #1232; not yet offered upstream. |
-| `.idml` dropped on the macOS app icon opens | `idml-app-icon-drop` (`b09233a`) | Upstream's #417 declares `.idml` only by a type it imports. When InDesign is installed, its own exported type for `.idml` wins, so the declaration no longer matches: Finder refuses the drop on the app's icon and Open With leaves DesignCraft out, while Dock drops still work. Adds a second `CFBundleDocumentTypes` entry by extension (Viewer, Alternate), which matches whatever type the file has. Only `packaging/macos/Info.plist.in` changes; checked that it parses. | Open upstream as [#1183](https://github.com/storytold/designcraft/pull/1183) (2026-10-17). |
 | Justified lines may squeeze word spaces below the Minimum, as InDesign does | `flexible-word-spacing` (`bf481d0`) | InDesign treats Minimum Word Spacing as a preference: it squeezes a line's spaces below it (to 25–30%) rather than set a much looser line. DesignCraft treated it as a limit, so lines broke differently (in the dictionary IDML, page 1's cat image moved to column 2 and every later page shifted). The rules were measured from InDesign's PDFs against their IDML (dictionary; Samhain story file with and without hyphenation): Single-line Composer fills to the Minimum and squeezes one more word when that falls short of Desired by less than 0.19× what the loose line exceeds it (97% of lines); Paragraph Composer costs each line ln(spacing ÷ Desired)², ×4 when squeezed (89% of paragraphs, 75% before). A document setting in Preferences › Composition: on for documents opened from IDML, off (as before) for new ones and old `.designcraft` files. The dictionary now matches 87.3% of InDesign's lines (72.5% before); page 1 now ends at *Antefa* as in InDesign. Hyphenated text still differs mostly by hyphenation points (DesignCraft and InDesign agree on ~60% of hyphenated words). | Open upstream as [#1190](https://github.com/storytold/designcraft/pull/1190) (2026-10-17). |
 | Inline images can be selected and resized | `inline-object-select` (`d51a650`) | An inline or anchored image lives in its story, not on the page, so the Selection tool never found it: a click selected the text frame around it. Now a click selects it where it sits in the text and shows its handles (a drag doesn't move it; it flows with the text, as in InDesign). A handle drag shows an outline and the W/H while the image stays put (as in InDesign); on release the frame takes the new size, cropping the picture from the sides that moved (⌘-drag scales it instead; Shift keeps proportions), and the text places it again; one undo step. Delete removes it from the text; Anchored Object Options and Release act on it. New commands `anchored.select`, `anchored.resize`. Not yet: objects in footnotes or table cells, objects turned with their frame, and the other object commands (fitting, stroke and fill, Direct Selection of the picture). | Open upstream as [#1195](https://github.com/storytold/designcraft/pull/1195) (2026-10-17). |
+| Custom footnote marks | `custom-footnote-symbols` | InDesign's footnote numbering offers only built-in styles, so GDT edited Palatino to get music notes as footnote marks. Document Footnote Options › Style › Custom… takes any text per mark (a symbol, several characters, an emoji), each with an optional character style on top of the reference's (a font that has the glyph), and what follows the last mark: doubled, repeated, counted (`✦2`) or numbers. Start at, restart, prefix and suffix apply as to numbers. `footnote.options {customMarks}`. IDML export writes InDesign's Symbols style and keeps the marks in a document label that import reads back. Not yet: endnotes, saved named sets, a per-note mark. | Not yet offered upstream. |
 
 ### Personal feature (also offered upstream as #1105)
 
@@ -69,6 +63,10 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 
 | Item | Upstream |
 |---|---|
+| Cross-references keep their edited text (ours, `xref-edited-text`) | [#1239](https://github.com/storytold/designcraft/pull/1239), 2026-10-31 |
+| Parent pages: no stray ¶ marks while parents are edited (ours, `parent-page-display`) | [#1232](https://github.com/storytold/designcraft/pull/1232), 2026-10-31 |
+| Parent pages: running-header placeholders (ours, `running-header-placeholder`) | [#2057](https://github.com/storytold/designcraft/pull/2057), 2026-10-31 |
+| `.idml` dropped on the macOS app icon opens (ours, `idml-app-icon-drop`) | [#1183](https://github.com/storytold/designcraft/pull/1183); texjer's [#2053](https://github.com/storytold/designcraft/pull/2053) does the same for `.indd` and `.indt` |
 | Inline pictures painted under their frame's text (ours, `inline-objects-under-text`) | [#1238](https://github.com/storytold/designcraft/pull/1238), 2026-10-30 |
 | Running headers read a page in text order (ours, `running-header-order`) | [#1233](https://github.com/storytold/designcraft/pull/1233), 2026-10-30 |
 | Drop caps scale with their point size (ours, `drop-cap-size`) | [#1184](https://github.com/storytold/designcraft/pull/1184), 2026-10-19 |
@@ -103,9 +101,6 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
 
 - **On the Mac:**
   - `web-relink` (web build): open the dictionary IDML; the Links panel shows its pictures missing. Relink to Folder… → choose its Links folder → the pictures appear; one Undo removes them all. Dropping the Links files on the window does the same.
-  - `xref-edited-text`: the *Imaginum Auctores* page lists names, years, volumes and issues, with page numbers matching where each picture lands; no line breaks inside a word (except the overlong ones).
-  - `parent-page-display`: open the parent spread with hidden characters shown: the right page has no stray ¶ marks.
-  - `running-header-placeholder`: on the parent spread the headers read `<first on page>` and `<last on page>`; on the document pages they show the entries.
   - With DesignCraft open, install a font in Font Book, switch back: the font is in the font menu,
     and text set in it (shown in a fallback while it was missing) now uses it.
   - A drop cap set larger than the body text is taller than one set at the body's size.
@@ -115,9 +110,8 @@ storage, as the desktop app keeps `prefs.json`. You reported your builds working
     on the Dock icon, Open With.
   - `inline-object-select`: in the dictionary, click an image with the Selection tool: it shows its handles. Drag a handle: an outline and W/H follow; on release the frame resizes (left/top crop that side, then it snaps to the line) and the text reflows; ⌘-drag scales the picture; Undo restores it; Delete removes it.
   - `flexible-word-spacing`: open the dictionary IDML; page 1 ends at *Antefa* with the cat in column 1. Preferences › Composition › Word Spacing below Minimum shows *InDesign-compatible*; choosing *Never (strict)* reflows it as before, and Undo puts it back.
-  - `idml-app-icon-drop`: after installing the rebuilt app, launch it once so macOS re-reads its
-    file types; then dropping an `.idml` on the app's icon in Finder (or in Applications) opens it,
-    and Open With lists DesignCraft.
+  - `custom-footnote-symbols`: Type › Document Footnote Options › Style › Custom…: add marks (say ♩ ♪ ♫ ♬), give one a character style with a font that has the glyph, pick what follows the last mark; the preview and the footnotes follow. Restart every page starts the marks again. Save, reopen; export IDML and reopen it: the marks are kept.
+  - Upstream's `.idml` (and `.indd`) icon drop, which came from our #1183: after installing the rebuilt app, launch it once, then drop a file on the app's icon in Finder.
 - **The web build after 0.14.0**: upstream rewrote the web shell (`WebShell::logic` and `raw_input_hook`); `save-format`'s preference storage and `web-relink`'s picker and drop code were carried into it but couldn't be compiled here. Build the web package and check Save documents as, Relink to Folder… and dropping the Links files.
 - **The web build**: rebuild and repeat the 2026-10-15 browser check (Save documents as survives a
   reload; ⌘S downloads `.idml`), since upstream changed the download code underneath.

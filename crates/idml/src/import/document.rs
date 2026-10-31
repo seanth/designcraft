@@ -262,6 +262,31 @@ impl<'r> Importer<'r> {
         };
     }
 
+    /// Custom footnote marks DesignCraft keeps in a document label (InDesign has no setting for
+    /// them). Marks past the caps, without text or naming a character style the file lacks are
+    /// left out (a missing style: the mark keeps the reference's style alone).
+    pub(super) fn footnote_marks_label(&mut self, root: &El) {
+        let Some(value) = root
+            .find("Properties")
+            .and_then(|p| p.find("Label"))
+            .and_then(|l| l.find_all("KeyValuePair").find(|kv| kv.get("Key") == Some(names::FOOTNOTE_MARKS_LABEL)))
+            .and_then(|kv| kv.get("Value"))
+        else {
+            return;
+        };
+        let Ok(mut c) = serde_json::from_str::<designcraft_doc::CustomMarks>(value) else { return };
+        c.marks.retain(|m| !m.text.is_empty() && m.text.chars().count() <= designcraft_doc::MAX_MARK_CHARS);
+        c.marks.truncate(designcraft_doc::MAX_CUSTOM_MARKS);
+        for m in &mut c.marks {
+            if m.char_style != designcraft_doc::NO_CHAR_STYLE && self.styles.char_style(&m.char_style).is_none() {
+                m.char_style = designcraft_doc::NO_CHAR_STYLE.into();
+            }
+        }
+        if !c.marks.is_empty() {
+            self.footnote_options.custom_marks = Some(c);
+        }
+    }
+
     /// Preferences › `FootnoteOption` (after styles: it names the footnote text and marker styles).
     pub(super) fn footnote_option(&mut self, e: &El) {
         let mut o = designcraft_doc::FootnoteOptions::default();
@@ -319,10 +344,12 @@ impl<'r> Importer<'r> {
             let story = top.iter().find(|e| e.local() == "Story" && e.get("AppliedTOCStyle") == Some(id))?;
             Some((ts, *self.story_ids.get(story.get("Self")?)?))
         })?;
-        let known = |r: Option<&str>| r.map(|r| self.para_style_ref(r)).filter(|n| self.styles.para(n).is_some());
+        // Property children are element text: formatting whitespace around a reference is dropped
+        // unless the reference as written names a style.
+        let known = |r: Option<&str>| r.map(|r| self.listed_para_style_ref(r)).filter(|n| self.styles.para(n).is_some());
         // Character styles the document has; [None] is stored as no style.
         let known_chars = |r: Option<&str>| {
-            r.map(|r| self.char_style_ref(r)).filter(|n| n != designcraft_doc::NO_CHAR_STYLE && self.styles.char_style(n).is_some())
+            r.map(|r| self.listed_char_style_ref(r)).filter(|n| n != designcraft_doc::NO_CHAR_STYLE && self.styles.char_style(n).is_some())
         };
         let entries: Vec<TocEntry> = ts
             .elements()
@@ -339,9 +366,10 @@ impl<'r> Importer<'r> {
                     _ => TocPageNumber::After,
                 };
                 let separator = e.get("Separator").map(crate::names::toc_separator_in).filter(|s| s != "\t" && s.chars().count() <= 64);
-                let entry_style = known(e.get("FormatStyle")).filter(|n| *n != format!("TOC Level {level}"));
-                let page_number_style = known_chars(e.get("PageNumberStyle"));
-                let separator_style = known_chars(e.get("SeparatorStyle"));
+                // InDesign writes these as `Properties` children; attributes are read too.
+                let entry_style = known(e.prop("FormatStyle").as_deref()).filter(|n| *n != format!("TOC Level {level}"));
+                let page_number_style = known_chars(e.prop("PageNumberStyle").as_deref());
+                let separator_style = known_chars(e.prop("SeparatorStyle").as_deref());
                 let sort = e.get("Sort").is_some_and(|v| v.trim() == "true");
                 Some(TocEntry { style, level, entry_style, page_number, separator, page_number_style, separator_style, sort })
             })
@@ -352,6 +380,7 @@ impl<'r> Importer<'r> {
         }
         let title: String = ts.get("Title").unwrap_or("").chars().filter(|c| !matches!(c, '\n' | '\r' | '\u{2029}')).take(1024).collect();
         let title_style = known(ts.get("TitleStyle")).filter(|n| n != "TOC Title");
-        Some(designcraft_doc::Toc { story, title, entries, page_numbers: true, title_style })
+        let create_bookmarks = ts.get("CreateBookmarks").or_else(|| ts.get("CreatePdfBookmarks")) == Some("true");
+        Some(designcraft_doc::Toc { story, title, entries, page_numbers: true, title_style, create_bookmarks })
     }
 }

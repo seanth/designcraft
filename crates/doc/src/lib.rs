@@ -59,7 +59,7 @@ pub use flex::{FlexAlign, FlexDirection, FlexJustify, FlexLayout, FlexSize};
 pub use ids::*;
 pub use index::{INDEX_MARK, IndexRef};
 pub use item::*;
-pub use notes::{FOOTNOTE_REF, FOOTNOTE_TABLE, Footnote, FootnoteOptions};
+pub use notes::{CustomMarks, FOOTNOTE_REF, FOOTNOTE_TABLE, Footnote, FootnoteOptions, MAX_CUSTOM_MARKS, MAX_MARK_CHARS, MarksAfter, NoteMark};
 pub use page::*;
 pub use selection::*;
 pub use story::*;
@@ -838,6 +838,9 @@ pub struct Toc {
     /// Paragraph style of the title; `None` is the generated "TOC Title" style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_style: Option<String>,
+    /// Generate a nested PDF outline from the included paragraphs when the TOC is updated.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub create_bookmarks: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -848,6 +851,16 @@ pub struct Bookmark {
     pub page: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Bookmark>,
+    /// Owned by the document's generated TOC, so updating it preserves manual bookmarks.
+    ///
+    /// Stored only in native files. Bookmarks (and so this flag) are not written to or read
+    /// from IDML yet, so after an IDML round trip the next TOC update builds the outline fresh.
+    /// If IDML bookmark import is added, imported bookmarks arrive with this flag false and the
+    /// next update would keep them as manual and add a second, duplicate outline. That import
+    /// must set this flag on the bookmarks the TOC generated (for example by matching them to
+    /// the TOC entries) when the TOC has `create_bookmarks` on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub generated_by_toc: bool,
 }
 
 impl Document {
