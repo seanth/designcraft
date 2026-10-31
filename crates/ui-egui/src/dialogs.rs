@@ -7376,7 +7376,7 @@ fn custom_marks_editor(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     let mut remove = None;
     egui::Grid::new("fn_marks").num_columns(3).spacing([8.0, 4.0]).show(ui, |ui| {
         for i in 0..n {
-            text_field_named(ui, d, &format!("mark.{i}.text"), 70.0, &crate::i18n::tr(&lang, "Mark"));
+            text_field_named(ui, d, &format!("mark.{i}.text"), 70.0, crate::i18n::tr(&lang, "Mark"));
             let key = format!("mark.{i}.charStyle");
             if d.s(&key).is_empty() {
                 d.fields.insert(key.clone(), json!(designcraft_doc::NO_CHAR_STYLE));
