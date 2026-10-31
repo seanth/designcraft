@@ -7331,6 +7331,37 @@ fn dialog_marks(d: &Dialog) -> Vec<designcraft_doc::NoteMark> {
         .collect()
 }
 
+/// Footnote Options › Custom › Add Mark: an empty row at the end (at most [`MAX_CUSTOM_MARKS`]).
+///
+/// [`MAX_CUSTOM_MARKS`]: designcraft_doc::MAX_CUSTOM_MARKS
+fn add_mark_row(d: &mut Dialog) {
+    let n = d.n("markCount").unwrap_or(0.0).clamp(0.0, designcraft_doc::MAX_CUSTOM_MARKS as f64) as usize;
+    if n >= designcraft_doc::MAX_CUSTOM_MARKS {
+        return;
+    }
+    d.fields.insert(format!("mark.{n}.text"), json!(""));
+    d.fields.insert(format!("mark.{n}.charStyle"), json!(designcraft_doc::NO_CHAR_STYLE));
+    d.fields.insert("markCount".into(), json!(n + 1));
+}
+
+/// Footnote Options › Custom › −: row `r` goes and the later rows move up one.
+fn remove_mark_row(d: &mut Dialog, r: usize) {
+    let n = d.n("markCount").unwrap_or(0.0).clamp(0.0, designcraft_doc::MAX_CUSTOM_MARKS as f64) as usize;
+    if r >= n {
+        return;
+    }
+    for i in r..n - 1 {
+        for f in ["text", "charStyle"] {
+            let next = d.fields.get(&format!("mark.{}.{f}", i + 1)).cloned().unwrap_or(Value::Null);
+            d.fields.insert(format!("mark.{i}.{f}"), next);
+        }
+    }
+    for f in ["text", "charStyle"] {
+        d.fields.remove(&format!("mark.{}.{f}", n - 1));
+    }
+    d.fields.insert("markCount".into(), json!(n - 1));
+}
+
 /// Footnote Options › Custom: one row per mark (its text and character style), rows added and
 /// removed, what follows the last mark, and the first footnotes' marks as they will read.
 fn custom_marks_editor(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
@@ -7358,22 +7389,10 @@ fn custom_marks_editor(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
         }
     });
     if let Some(r) = remove {
-        // Later rows move up one.
-        for i in r..n - 1 {
-            for f in ["text", "charStyle"] {
-                let next = d.fields.get(&format!("mark.{}.{f}", i + 1)).cloned().unwrap_or(Value::Null);
-                d.fields.insert(format!("mark.{i}.{f}"), next);
-            }
-        }
-        for f in ["text", "charStyle"] {
-            d.fields.remove(&format!("mark.{}.{f}", n - 1));
-        }
-        d.fields.insert("markCount".into(), json!(n - 1));
+        remove_mark_row(d, r);
     }
     if n < designcraft_doc::MAX_CUSTOM_MARKS && ui.button(crate::i18n::tr(&lang, "Add Mark")).clicked() {
-        d.fields.insert(format!("mark.{n}.text"), json!(""));
-        d.fields.insert(format!("mark.{n}.charStyle"), json!(designcraft_doc::NO_CHAR_STYLE));
-        d.fields.insert("markCount".into(), json!(n + 1));
+        add_mark_row(d);
     }
     ui.horizontal(|ui| {
         crate::rtl::label(ui, crate::i18n::tr(&lang, "After the Last Mark:"));
