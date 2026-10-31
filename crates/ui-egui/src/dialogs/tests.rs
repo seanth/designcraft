@@ -4336,3 +4336,81 @@ fn on_a_page_without_a_section_the_window_is_new_section() {
     visible_label(&labels, screen, "Numbering & Section Options");
     assert!(!labels.iter().any(|(t, _, _)| t == "New Section"));
 }
+
+/// Footnote Options › Style › Custom…: rows of marks with their character styles, added and
+/// removed, set on OK as the document's custom marks; reopening shows them; another style clears
+/// them.
+#[test]
+fn footnote_options_dialog_edits_custom_marks() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    app.run("style.character.create", json!({"name": "Music"})).unwrap();
+    app.run("app.footnoteOptionsDialog", json!({})).unwrap();
+    {
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!(d.s("style"), "arabic");
+        d.fields.insert("style".into(), json!("custom"));
+    }
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 900.0)).build_ui_state(
+        |ui, app: &mut DesignApp| {
+            let key = egui::Id::unique("custom_marks_fonts");
+            if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                crate::theme::install_fonts(ui.ctx(), "");
+                ui.data_mut(|d| d.insert_temp(key, true));
+                return;
+            }
+            show(app, ui.ctx());
+        },
+        app,
+    );
+    h.run_steps(3);
+    // One empty row to start with; two more added.
+    h.get_by_label("Add Mark").click();
+    h.run_steps(2);
+    h.get_by_label("Add Mark").click();
+    h.run_steps(2);
+    {
+        let d = h.state_mut().ui.dialog.as_mut().unwrap();
+        assert_eq!(d.n("markCount"), Some(3.0));
+        for (i, (text, style)) in [("\u{266A}", "Music"), ("drop me", "[None]"), ("[ii]", "[None]")].iter().enumerate() {
+            d.fields.insert(format!("mark.{i}.text"), json!(text));
+            d.fields.insert(format!("mark.{i}.charStyle"), json!(style));
+        }
+        d.fields.insert("marksAfter".into(), json!("numbers"));
+    }
+    h.run_steps(2);
+    // Remove the second row: the third moves up.
+    h.get_all_by_label("−").nth(1).unwrap().click();
+    h.run_steps(2);
+    {
+        let d = h.state().ui.dialog.as_ref().unwrap();
+        assert_eq!(d.n("markCount"), Some(2.0));
+        assert_eq!(d.s("mark.1.text"), "[ii]");
+    }
+    h.get_by_label("  OK  ").click();
+    h.run_steps(3);
+    let mut app = h.into_state();
+    assert!(app.ui.dialog.is_none());
+    let o = app.session.doc().unwrap().doc.footnote_options.clone();
+    assert_eq!(o.style, designcraft_doc::NumberStyle::Arabic, "the built-in style stays underneath");
+    assert_eq!([1, 2, 3].map(|n| o.label(n, false)), ["\u{266A}", "[ii]", "1"]);
+    assert_eq!(o.mark_style(1).as_deref(), Some("Music"));
+    // Reopened: Custom, with its rows.
+    app.run("app.footnoteOptionsDialog", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    draw(&mut app, &ctx);
+    {
+        let d = app.ui.dialog.as_mut().unwrap();
+        assert_eq!(
+            (d.s("style").as_str(), d.n("markCount"), d.s("mark.0.text").as_str(), d.s("mark.0.charStyle").as_str()),
+            ("custom", Some(2.0), "\u{266A}", "Music")
+        );
+        assert_eq!(d.s("marksAfter"), "numbers");
+        // Another style: the custom marks go.
+        d.fields.insert("style".into(), json!("symbols"));
+    }
+    confirm(&mut app).unwrap();
+    let o = app.session.doc().unwrap().doc.footnote_options.clone();
+    assert_eq!((o.custom_marks.is_none(), o.label(1, false).as_str()), (true, "*"));
+}

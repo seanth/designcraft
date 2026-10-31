@@ -4828,3 +4828,38 @@ fn epub_split_document_round_trips() {
         assert_eq!(import_idml(&export_idml(&d)).unwrap().settings.epub_split, want, "{attrs}");
     }
 }
+
+/// Custom footnote marks, which InDesign has no setting for: export writes its Symbols style and
+/// keeps the marks in a document label, which import reads back (a mark naming a character style
+/// the file lacks keeps the reference's style alone).
+#[test]
+fn custom_footnote_marks_round_trip_through_a_document_label() {
+    use designcraft_doc::{CustomMarks, MarksAfter, NoteMark};
+    let mut d = Document::new(&NewDocument::default());
+    std::sync::Arc::make_mut(&mut d.styles).character.push(designcraft_doc::CharacterStyle {
+        name: "Music".into(),
+        based_on: None,
+        chars: Default::default(),
+        shortcut: String::new(),
+    });
+    let marks = CustomMarks {
+        marks: vec![NoteMark { text: "\u{266A}".into(), char_style: "Music".into() }, NoteMark { text: "[\"x\"]".into(), ..Default::default() }],
+        after: MarksAfter::Counter,
+    };
+    d.footnote_options.custom_marks = Some(marks.clone());
+    let bytes = export_idml(&d);
+    let designmap = zip_text(&bytes, "designmap.xml");
+    assert!(designmap.contains("designcraft.footnoteMarks"), "the label: {designmap}");
+    let prefs = zip_text(&bytes, "Resources/Preferences.xml");
+    assert!(prefs.contains(r#"<FootnoteNumberingStyle type="enumeration">Symbols</FootnoteNumberingStyle>"#), "InDesign's nearest style: {prefs}");
+    let back = import_idml(&bytes).unwrap();
+    assert_eq!(back.footnote_options.custom_marks, Some(marks));
+    // Without the character style in the file, the mark stays and takes the reference's style.
+    std::sync::Arc::make_mut(&mut d.styles).character.retain(|s| s.name != "Music");
+    let back = import_idml(&export_idml(&d)).unwrap();
+    let got = back.footnote_options.custom_marks.unwrap();
+    assert_eq!(got.marks[0].text, "\u{266A}");
+    assert_eq!(got.marks[0].char_style, designcraft_doc::NO_CHAR_STYLE);
+    // No custom marks: no label.
+    assert!(!zip_text(&export_idml(&Document::new(&NewDocument::default())), "designmap.xml").contains("footnoteMarks"));
+}
