@@ -19,11 +19,19 @@ impl<'a> Ex<'a> {
             })
             .attr("ActiveLayer", d.layers.first().map(|l| uid(l.id.0)).unwrap_or_else(|| "n".into()));
         // Settings InDesign has no place for, kept as document labels it carries along.
+        let mut label = El::new("Label");
+        let mut labelled = false;
         if let Some(c) = d.footnote_options.custom()
             && let Ok(json) = serde_json::to_string(c)
         {
-            let mut label = El::new("Label");
             label.push(El::new("KeyValuePair").attr("Key", names::FOOTNOTE_MARKS_LABEL).attr("Value", json));
+            labelled = true;
+        }
+        if let Some(json) = nested_footnotes_label(d) {
+            label.push(El::new("KeyValuePair").attr("Key", names::NESTED_FOOTNOTES_LABEL).attr("Value", json));
+            labelled = true;
+        }
+        if labelled {
             let mut props = El::new("Properties");
             props.push(label);
             root.push(props);
@@ -359,6 +367,27 @@ fn text_variable_el(v: &designcraft_doc::vars::TextVariable) -> El {
         e.push(s);
     }
     e
+}
+
+/// The nested footnotes of `d` as written into the IDML's footnotes (see
+/// `Footnote::flattened`), kept whole for DesignCraft: for each footnote with nested notes, its
+/// story (`Self`), its index, its flattened text and its own text with the nested notes. `None`
+/// when no footnote has nested notes.
+fn nested_footnotes_label(d: &Document) -> Option<String> {
+    let o = &d.footnote_options;
+    let mut entries = Vec::new();
+    for st in d.stories.values() {
+        if !st.notes.iter().any(|n| !n.text.notes.is_empty()) {
+            continue;
+        }
+        let numbers = d.nested_note_numbers(st.id);
+        let mark = |id: u64| numbers.get(&id).map_or_else(String::new, |&k| o.label(k, false));
+        for (k, n) in st.notes.iter().enumerate().filter(|(_, n)| !n.text.notes.is_empty()) {
+            let flat = n.flattened(&mark, &o.separator);
+            entries.push(serde_json::json!({"story": uid(st.id.0), "index": k, "flat": flat.text, "text": n.text}));
+        }
+    }
+    (!entries.is_empty()).then(|| serde_json::Value::Array(entries).to_string())
 }
 
 #[cfg(test)]
