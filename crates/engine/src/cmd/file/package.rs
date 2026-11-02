@@ -204,5 +204,122 @@ pub(super) fn open_zipped_package(s: &mut Session, bytes: &[u8]) -> Result<Value
     Ok(r)
 }
 
+/// The font files of a zip (fonts dropped zipped): every font entry at any depth, without a
+/// Mac's `__MACOSX/` and `._` entries, each within [`MAX_DOCUMENT_FONT_BYTES`] → (fonts, a warning
+/// per entry skipped). Not a zip: nothing.
+fn fonts_in_zip(bytes: &[u8]) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
+    let Ok(mut z) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else { return (Vec::new(), Vec::new()) };
+    if z.len() > MAX_PACKAGE_FILES {
+        return (Vec::new(), vec![format!("too many files in the zip ({}; at most {MAX_PACKAGE_FILES})", z.len())]);
+    }
+    let names: Vec<String> = z
+        .file_names()
+        .filter(|n| {
+            let p = parts(n);
+            is_document_font_name(n) && !p.iter().any(|c| c.eq_ignore_ascii_case("__MACOSX")) && !p.last().is_some_and(|l| l.starts_with("._"))
+        })
+        .map(str::to_string)
+        .collect();
+    let (mut fonts, mut warnings) = (Vec::new(), Vec::new());
+    for name in names {
+        match read_entry(&mut z, &name, MAX_DOCUMENT_FONT_BYTES) {
+            Ok(data) => fonts.push((name, data)),
+            Err(e) => warnings.push(format!("{name}: {e}")),
+        }
+    }
+    (fonts, warnings)
+}
+
+/// The font files directly in `dir` (not `._` resource forks), by name.
+fn folder_font_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files: Vec<std::path::PathBuf> = crate::io::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| is_document_font_name(n) && !n.starts_with("._")) && crate::io::is_file(f))
+        .collect();
+    files.sort();
+    files
+}
+
+/// The fonts a dropped `path` brings: a font file; a folder's font files (and those of a
+/// `Document Fonts` folder in it); a zip's font files. Each file is read within
+/// [`MAX_DOCUMENT_FONT_BYTES`] and the automation roots → (fonts, a warning per file skipped).
+fn fonts_at_path(path: &str) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
+    let (mut fonts, mut warnings) = (Vec::new(), Vec::new());
+    let read = |p: &std::path::Path, fonts: &mut Vec<(String, Vec<u8>)>, warnings: &mut Vec<String>| {
+        let name = p.display().to_string();
+        match crate::io::read_capped(p, MAX_DOCUMENT_FONT_BYTES) {
+            Ok(b) if b.len() as u64 > MAX_DOCUMENT_FONT_BYTES => warnings.push(format!("{name}: larger than {} MB", MAX_DOCUMENT_FONT_BYTES >> 20)),
+            Ok(b) => fonts.push((name, b)),
+            Err(e) => warnings.push(format!("{name}: {e}")),
+        }
+    };
+    let p = std::path::Path::new(path);
+    if crate::io::is_dir(p) {
+        // Its font files, then those of a Document Fonts folder in it.
+        let mut own = folder_font_files(p);
+        for e in crate::io::read_dir(p).into_iter().flatten().flatten() {
+            if e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(DOCUMENT_FONTS_FOLDER)) && crate::io::is_dir(e.path()) {
+                own.extend(folder_font_files(&e.path()));
+            }
+        }
+        for f in own.iter().take(designcraft_fonts::MAX_DOCUMENT_FONT_FILES + 1) {
+            read(f, &mut fonts, &mut warnings);
+        }
+    } else if is_document_font_name(path) {
+        read(p, &mut fonts, &mut warnings);
+    } else {
+        match crate::io::read_capped(p, MAX_PACKAGE_DOCUMENT_BYTES) {
+            Ok(b) if b.len() as u64 <= MAX_PACKAGE_DOCUMENT_BYTES => {
+                let (f, w) = fonts_in_zip(&b);
+                fonts.extend(f);
+                warnings.extend(w);
+            }
+            Ok(_) => warnings.push(format!("{path}: larger than {} MB", MAX_PACKAGE_DOCUMENT_BYTES >> 20)),
+            Err(e) => warnings.push(format!("{path}: {e}")),
+        }
+    }
+    (fonts, warnings)
+}
+
+/// `font.add {paths?: [path], files?: [{path, base64}]}`: dropped fonts (font files, folders of
+/// them, zips of them) join the active document's own fonts until DesignCraft quits, ahead of
+/// installed fonts of the same name, as its `Document Fonts` are. Nothing is written beside the
+/// document.
+pub(super) fn font_add(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "font.add";
+    let index = s.active_index().ok_or_else(|| bad(ID, "open a document first: dropped fonts belong to the document"))?;
+    let (mut fonts, mut warnings) = (Vec::new(), Vec::new());
+    for path in p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        let (f, w) = fonts_at_path(path);
+        fonts.extend(f);
+        warnings.extend(w);
+    }
+    if p.get("files").is_some() {
+        for (path, b64) in files_param(ID, p)? {
+            let bytes = base64_decode(&b64);
+            if is_document_font_name(&path) {
+                fonts.push((path, bytes));
+            } else {
+                let (f, w) = fonts_in_zip(&bytes);
+                fonts.extend(f);
+                warnings.extend(w);
+            }
+        }
+    }
+    if fonts.is_empty() {
+        return Err(bad(ID, "no font files (.ttf, .otf, .ttc, .otc) to add"));
+    }
+    let scope = s.docs.get(index).map_or(0, |st| st.doc.font_scope);
+    let r = FontDb::global().add_document_font_files(scope, fonts);
+    if r.faces > 0 {
+        attach_fonts(s, index, &r)?;
+    }
+    warnings.extend(r.skipped);
+    Ok(json!({"faces": r.faces, "warnings": warnings}))
+}
+
 #[cfg(test)]
 mod tests;

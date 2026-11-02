@@ -145,3 +145,64 @@ fn document_fonts_load_for_a_document_already_open() {
     assert_ne!(st.revision, revision, "drawn again with the fonts");
     assert_eq!(font_entry(&mut s, FAMILY)["missing"], false);
 }
+
+/// Fonts dropped on the window join the active document's fonts: a font file, a folder of them
+/// (with a Document Fonts folder in it), a zip of them. Other documents don't see them; it isn't
+/// an edit; with no document open, there's nothing to add them to.
+#[test]
+fn dropped_fonts_join_the_active_document() {
+    const A: &str = "Dropped Font Test A";
+    const B: &str = "Dropped Font Test B";
+    const C: &str = "Dropped Font Test C";
+    let dir = std::env::temp_dir().join(format!("dc-font-add-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("folder").join("Document Fonts")).unwrap();
+    std::fs::write(dir.join("a.ttf"), font(A)).unwrap();
+    std::fs::write(dir.join("folder").join("Document Fonts").join("b.otf"), font(B)).unwrap();
+    std::fs::write(dir.join("folder").join("._b.otf"), b"junk").unwrap();
+    std::fs::write(dir.join("fonts.zip"), zip(&[("fonts/c.ttf", &font(C)), ("__MACOSX/fonts/._c.ttf", b"junk")])).unwrap();
+
+    let mut s = Session::new();
+    assert!(s.execute("font.add", &json!({"paths": [dir.join("a.ttf").to_string_lossy()]})).is_err(), "no document to add them to");
+    let doc = document_bytes(A);
+    s.execute("file.openBytes", &json!({"name": "Issue.designcraft", "base64": base64_encode(&doc)})).unwrap();
+    assert_eq!(font_entry(&mut s, A)["missing"], true);
+    let paths = [dir.join("a.ttf"), dir.join("folder"), dir.join("fonts.zip")];
+    for path in &paths {
+        let r = s.execute("font.add", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        assert_eq!(r["faces"], 1, "{}: {r}", path.display());
+    }
+    let r = s.execute("font.list", &json!({})).unwrap();
+    assert_eq!(font_entry(&mut s, A)["missing"], false, "{r}");
+    let fonts = s.doc().unwrap().doc.font_scope;
+    for family in [A, B, C] {
+        assert!(designcraft_fonts::FontDb::global().scoped(fonts).face(family, "Regular").family.eq_ignore_ascii_case(family), "{family}");
+    }
+    assert!(!s.doc().unwrap().is_dirty(), "not an edit");
+    // Another document doesn't see them.
+    s.execute("file.openBytes", &json!({"name": "Other.designcraft", "base64": base64_encode(&doc)})).unwrap();
+    assert_eq!(font_entry(&mut s, A)["missing"], true);
+    // From a browser: contents, a font file or a zip of them.
+    let r = s.execute("font.add", &json!({"files": files(&[("a.ttf", &font(A)), ("more.zip", &zip(&[("b.otf", &font(B))]))])})).unwrap();
+    assert_eq!(r["faces"], 2, "{r}");
+    assert_eq!(font_entry(&mut s, A)["missing"], false);
+    assert!(s.execute("font.add", &json!({"files": files(&[("notes.txt", b"hello")])})).is_err(), "no fonts");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A zipped package opened from disk (File › Open, or dropped on the desktop window) opens like
+/// one handed over.
+#[test]
+fn a_zipped_package_opens_from_disk() {
+    const FAMILY: &str = "Package Zip Disk Test Family";
+    let dir = std::env::temp_dir().join(format!("dc-zip-package-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Issue.zip");
+    std::fs::write(&path, zip(&[("Issue/Issue.designcraft", &document_bytes(FAMILY)), ("Issue/Document Fonts/f.ttf", &font(FAMILY))])).unwrap();
+    let mut s = Session::new();
+    let r = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert_eq!(r["documentFonts"], 1, "{r}");
+    assert_eq!(font_entry(&mut s, FAMILY)["missing"], false);
+    let _ = std::fs::remove_dir_all(&dir);
+}
