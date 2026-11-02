@@ -102,6 +102,31 @@ impl DesignApp {
         Ok(Value::Null)
     }
 
+    /// Take the folders handed over out of `inbox` and import each (see [`Self::import_folder`]):
+    /// a folder's files arrive together, named by their paths in it, with a `folder:` purpose.
+    fn import_folders(&mut self, inbox: &crate::Inbox) {
+        let folders: Vec<ImportedFile> = {
+            let mut files = inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (folders, rest) = std::mem::take(&mut *files).into_iter().partition(|f| f.request.purpose.starts_with("folder:"));
+            *files = rest;
+            folders
+        };
+        let mut folders = folders;
+        while let Some(purpose) = folders.first().map(|f| f.request.purpose.clone()) {
+            let (folder, rest): (Vec<ImportedFile>, Vec<ImportedFile>) = folders.into_iter().partition(|f| f.request.purpose == purpose);
+            folders = rest;
+            let Some(first) = folder.first() else { continue };
+            let request = ImportRequest { purpose: purpose.trim_start_matches("folder:").to_string(), ..first.request.clone() };
+            if self.ui.dialog.as_ref().is_some_and(|d| d.id != "findFont") {
+                self.status(crate::i18n::tr(&self.ui.language, "Folder cancelled while a dialog is open; choose it again"));
+                continue;
+            }
+            if let Err(e) = self.import_folder(&request, folder) {
+                self.status(e);
+            }
+        }
+    }
+
     /// A folder handed over (picked or dropped), each file named by its path in it: `package`
     /// opens its document with the `Document Fonts` beside it; `documentFonts` gives its fonts to
     /// the document that asked; `drop` does the first when the folder holds a document, else the
@@ -114,11 +139,11 @@ impl DesignApp {
         if request.purpose == "package" || (request.purpose == "drop" && has_document) {
             return self.open_named_file("file.openPackage", json!({"files": list}), folder);
         }
-        if request.purpose == "documentFonts" {
-            self.activate_import_target(request)?;
-        } else if self.session.active().is_none() {
-            return Err(crate::i18n::tr(&self.ui.language, "The folder holds no document to open").to_string());
+        if request.purpose != "documentFonts" {
+            // A dropped folder of fonts: they join the active document's fonts.
+            return self.add_dropped_fonts(json!({"files": list}));
         }
+        self.activate_import_target(request)?;
         let r = self.run("font.loadDocumentFonts", json!({"files": list}))?;
         let faces = r.get("documentFonts").and_then(Value::as_u64).unwrap_or(0);
         let title = self.session.active().map(|d| d.title()).unwrap_or_default();
@@ -127,6 +152,34 @@ impl DesignApp {
                 .replace("{count}", &faces.to_string())
                 .replace("{title}", &title),
         );
+        // Find Font, if open, lists the fonts again: the missing ones may be found now.
+        if let Some(d) = self.ui.dialog.as_mut().filter(|d| d.id == "findFont") {
+            d.fields.remove("_fonts");
+        }
+        Ok(r)
+    }
+
+    /// Fonts dropped on the window (`font.add`: font files, folders and zips of them) join the
+    /// active document's own fonts until DesignCraft quits; the status line says how many, or why
+    /// none.
+    pub(crate) fn add_dropped_fonts(&mut self, params: Value) -> Result<Value, String> {
+        let r = match self.run("font.add", params) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status(e.clone());
+                return Err(e);
+            }
+        };
+        let faces = r.get("faces").and_then(Value::as_u64).unwrap_or(0);
+        let skipped = r.get("warnings").and_then(Value::as_array).map_or(0, Vec::len);
+        let title = self.session.active().map(|d| d.title()).unwrap_or_default();
+        let mut text = crate::i18n::tr(&self.ui.language, "{count} fonts added to “{title}” until DesignCraft quits")
+            .replace("{count}", &faces.to_string())
+            .replace("{title}", &title);
+        if skipped > 0 {
+            text.push_str(&crate::i18n::tr(&self.ui.language, " ({count} files skipped)").replace("{count}", &skipped.to_string()));
+        }
+        self.status(text);
         // Find Font, if open, lists the fonts again: the missing ones may be found now.
         if let Some(d) = self.ui.dialog.as_mut().filter(|d| d.id == "findFont") {
             d.fields.remove("_fonts");
@@ -173,30 +226,18 @@ impl DesignApp {
             }
         }
         let Some(inbox) = self.services.inbox.clone() else { return };
-        let mut files = std::mem::take(&mut *inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-        // A folder's files arrive together, named by their paths in it (`folder:` purposes).
-        while let Some(at) = files.iter().position(|f| f.request.purpose.starts_with("folder:")) {
-            let purpose = files.get(at).map(|f| f.request.purpose.clone()).unwrap_or_default();
-            let (folder, rest): (Vec<ImportedFile>, Vec<ImportedFile>) = files.into_iter().partition(|f| f.request.purpose == purpose);
-            files = rest;
-            let Some(first) = folder.first() else { continue };
-            let request =
-                ImportRequest { purpose: purpose.trim_start_matches("folder:").to_string(), target: first.request.target, wanted: Vec::new() };
-            if self.ui.dialog.as_ref().is_some_and(|d| d.id != "findFont") {
-                self.status(crate::i18n::tr(&self.ui.language, "Folder cancelled while a dialog is open; choose it again"));
-                continue;
-            }
-            if let Err(e) = self.import_folder(&request, folder) {
-                self.status(e);
-            }
-        }
+        self.import_folders(&inbox);
+        let files = std::mem::take(&mut *inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         let files = self.relink_from_inbox(files);
         for file in files {
             if file.request.purpose == "shortcuts" {
                 shortcut_import::import_delivered(self, &file.bytes);
                 continue;
             }
-            if self.ui.dialog.is_some() {
+            // Fonts dropped while Find Font shows the missing ones are what it is waiting for.
+            let fonts_for_find_font = self.ui.dialog.as_ref().is_some_and(|d| d.id == "findFont")
+                && (designcraft_fonts::is_document_font_name(&file.name) || file.name.to_ascii_lowercase().ends_with(".zip"));
+            if self.ui.dialog.is_some() && !fonts_for_find_font {
                 self.status(
                     crate::i18n::tr(&self.ui.language, "{name}: import cancelled while a dialog is open; choose the file again")
                         .replace("{name}", &file.name),
@@ -222,10 +263,19 @@ impl DesignApp {
             }
             return self.run("style.load", params);
         }
+        // Font files, or a zip of them, join the document the drop was meant for.
+        let zipped_package = designcraft_engine::cmd::is_zipped_package(&file.bytes);
+        if designcraft_fonts::is_document_font_name(&file.name) || (lower.ends_with(".zip") && !zipped_package) {
+            if file.request.target.is_some() {
+                self.activate_import_target(&file.request)?;
+            }
+            let b64 = designcraft_engine::cmd::base64_encode(&file.bytes);
+            return self.add_dropped_fonts(json!({"files": [{"path": file.name, "base64": b64}]}));
+        }
         // A zipped package (a document with its Document Fonts) opens like the document.
         let layout = opens_as_document(&file.name)
             || (std::path::Path::new(&file.name).extension().is_none() && designcraft_engine::cmd::is_document(&file.bytes))
-            || designcraft_engine::cmd::is_zipped_package(&file.bytes);
+            || zipped_package;
         let place =
             file.request.purpose == "place" || (matches!(file.request.purpose.as_str(), "drop" | "open") && !layout && !lower.ends_with(".ase"));
         if place || lower.ends_with(".ase") || file.request.purpose == "swatches" {
@@ -278,6 +328,9 @@ impl DesignApp {
         if path.to_ascii_lowercase().ends_with(".ase") {
             return self.run("swatch.load", json!({"path": path}));
         }
+        if let Some(r) = self.open_dropped_fonts_or_package(path) {
+            return r;
+        }
         let document = opens_as_document(path)
             || (std::path::Path::new(path).extension().is_none()
                 && designcraft_engine::io::read_capped(path, designcraft_engine::cmd::DOCUMENT_SNIFF_BYTES)
@@ -296,6 +349,36 @@ impl DesignApp {
             }
         }
         self.open_file("file.place", params)
+    }
+
+    /// A dropped font file, folder or zip: fonts join the active document's fonts (`font.add`); a
+    /// package folder opens its document (its Document Fonts load from beside it) and a zipped
+    /// package opens like one. `None`: not one of those.
+    fn open_dropped_fonts_or_package(&mut self, path: &str) -> Option<Result<Value, String>> {
+        let fonts = json!({"paths": [path]});
+        if designcraft_fonts::is_document_font_name(path) {
+            return Some(self.add_dropped_fonts(fonts));
+        }
+        if designcraft_engine::io::is_dir(path) {
+            // The document nearest the top, as a package keeps it.
+            let mut documents: Vec<String> = designcraft_engine::io::read_dir(path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path().to_string_lossy().into_owned())
+                .filter(|p| opens_as_document(p) && !std::path::Path::new(p).file_name().is_some_and(|n| n.to_string_lossy().starts_with("._")))
+                .collect();
+            documents.sort();
+            return Some(match documents.first() {
+                Some(doc) => self.open_file("file.open", json!({"path": doc})),
+                None => self.add_dropped_fonts(fonts),
+            });
+        }
+        if path.to_ascii_lowercase().ends_with(".zip") {
+            let package = designcraft_engine::io::read_capped(path, 1 << 30).is_ok_and(|b| designcraft_engine::cmd::is_zipped_package(&b));
+            return Some(if package { self.open_file("file.open", json!({"path": path})) } else { self.add_dropped_fonts(fonts) });
+        }
+        None
     }
 
     /// Queue files the operating system asked the app to open. They can arrive before the window
@@ -1167,7 +1250,7 @@ mod folder_tests {
             pick_folder: Some(Box::new(move |request: ImportRequest| {
                 seen.lock().unwrap().push(request.purpose.clone());
                 sink.lock().unwrap().extend(folder.iter().map(|(name, bytes)| ImportedFile {
-                    request: ImportRequest { purpose: request.purpose.clone(), target: request.target, wanted: Vec::new() },
+                    request: request.clone(),
                     name: name.clone(),
                     bytes: bytes.clone(),
                 }));
@@ -1228,7 +1311,7 @@ mod folder_tests {
         let inbox = app.services.inbox.clone().unwrap();
         let drop = |inbox: &Inbox, files: Vec<(&str, Vec<u8>)>| {
             inbox.lock().unwrap().extend(files.into_iter().map(|(name, bytes)| ImportedFile {
-                request: ImportRequest { purpose: "folder:drop".into(), target: None, wanted: Vec::new() },
+                request: ImportRequest { purpose: "folder:drop".into(), ..Default::default() },
                 name: name.into(),
                 bytes,
             }));
@@ -1236,7 +1319,7 @@ mod folder_tests {
         drop(&inbox, vec![("Document Fonts/f.ttf", font(FAMILY))]);
         app.drain_inbox();
         assert!(app.session.documents().is_empty());
-        assert!(app.ui.status.contains("no document"), "{}", app.ui.status);
+        assert!(app.ui.status.contains("no document open"), "{}", app.ui.status);
 
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, data) in [("Issue/Issue.designcraft", document_bytes(FAMILY)), ("Issue/Document Fonts/f.ttf", font(FAMILY))] {
@@ -1245,7 +1328,7 @@ mod folder_tests {
         }
         let zipped = zip.finish().unwrap().into_inner();
         inbox.lock().unwrap().push(ImportedFile {
-            request: ImportRequest { purpose: "drop".into(), target: None, wanted: Vec::new() },
+            request: ImportRequest { purpose: "drop".into(), ..Default::default() },
             name: "Issue.zip".into(),
             bytes: zipped,
         });
@@ -1257,5 +1340,58 @@ mod folder_tests {
         app.drain_inbox();
         assert_eq!(app.session.documents().len(), 2, "the dropped package folder opens");
         assert!(!missing(&mut app, FAMILY));
+    }
+
+    /// Fonts dropped on the desktop window join the active document's fonts: a font file, a
+    /// folder of them, a zip of them. A dropped package folder opens its document instead, with
+    /// the Document Fonts beside it.
+    #[test]
+    fn fonts_dropped_on_the_desktop_window() {
+        const FAMILY: &str = "UI Dropped Desktop Family";
+        const PACKAGED: &str = "UI Dropped Package Family";
+        let dir = tempfile::tempdir().unwrap();
+        let font_path = dir.path().join("f.ttf");
+        std::fs::write(&font_path, font(FAMILY)).unwrap();
+        let fonts_zip = dir.path().join("fonts.zip");
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file("fonts/f.ttf", zip::write::SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut zip, &font(FAMILY)).unwrap();
+        std::fs::write(&fonts_zip, zip.finish().unwrap().into_inner()).unwrap();
+        let package = dir.path().join("Issue");
+        std::fs::create_dir_all(package.join("Document Fonts")).unwrap();
+        std::fs::write(package.join("Issue.designcraft"), document_bytes(PACKAGED)).unwrap();
+        std::fs::write(package.join("Document Fonts").join("p.ttf"), font(PACKAGED)).unwrap();
+
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Services::default());
+        assert!(app.open_dropped(&font_path.to_string_lossy()).is_err(), "no document to add it to");
+        let b64 = designcraft_engine::cmd::base64_encode(&document_bytes(FAMILY));
+        app.run("file.openBytes", json!({"name": "Issue.designcraft", "base64": b64})).unwrap();
+        assert!(missing(&mut app, FAMILY));
+        app.open_dropped(&font_path.to_string_lossy()).unwrap();
+        assert!(!missing(&mut app, FAMILY));
+        assert!(app.ui.status.contains("1 fonts added"), "{}", app.ui.status);
+        assert!(!app.session.active().unwrap().is_dirty());
+        app.open_dropped(&fonts_zip.to_string_lossy()).unwrap();
+        assert!(app.ui.status.contains("1 fonts added"), "a zip of fonts: {}", app.ui.status);
+        // A package folder opens its document, its fonts beside it.
+        app.open_dropped(&package.to_string_lossy()).unwrap();
+        assert_eq!(app.session.documents().len(), 2);
+        assert!(!missing(&mut app, PACKAGED));
+    }
+
+    /// In a browser, a dropped font file joins the document the drop was meant for.
+    #[test]
+    fn a_font_dropped_in_a_browser_joins_the_document() {
+        const FAMILY: &str = "UI Dropped Web Family";
+        let (mut app, _) = app_with_folder(Vec::new());
+        let b64 = designcraft_engine::cmd::base64_encode(&document_bytes(FAMILY));
+        app.run("file.openBytes", json!({"name": "Issue.designcraft", "base64": b64})).unwrap();
+        let request = app.import_request("drop");
+        app.services.inbox.clone().unwrap().lock().unwrap().push(ImportedFile { request, name: "f.otf".into(), bytes: font(FAMILY) });
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some("findFont"), "the missing font is shown");
+        app.drain_inbox();
+        assert!(!missing(&mut app, FAMILY), "{}", app.ui.status);
+        assert_eq!(app.session.documents().len(), 1, "not placed, not opened");
+        assert!(!app.ui.dialog.as_ref().unwrap().fields.contains_key("_fonts"), "Find Font lists the fonts again");
     }
 }

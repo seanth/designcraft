@@ -7,10 +7,10 @@ use designcraft_engine::Session;
 use designcraft_ui_egui::{DesignApp, ImportRequest, ImportedFile, Inbox, Services};
 use wasm_bindgen::JsCast as _;
 
-const DOC_EXTS: &[&str] = &["designcraft", "idml", "indd", "indt"];
 /// What Open… offers: the documents, and a zipped package (a document with its Document Fonts).
-const OPEN_EXTS: &[&str] = &["designcraft", "idml", "indd", "indt", "zip"];
-/// The font files a package's `Document Fonts` folder holds.
+const DOC_EXTS: &[&str] = &["designcraft", "idml", "indd", "indt", "zip"];
+/// The documents a package folder holds, and the font files of its `Document Fonts` folder.
+const PACKAGE_DOC_EXTS: &[&str] = &["designcraft", "idml", "indd", "indt"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "ttc", "otc"];
 const IMAGE_EXTS: &[&str] = &[
     "png",
@@ -452,7 +452,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             } else if request.purpose == "place" {
                 rfd::AsyncFileDialog::new().add_filter("Graphics", IMAGE_EXTS)
             } else {
-                rfd::AsyncFileDialog::new().add_filter("DesignCraft, IDML, InDesign or a zipped package", OPEN_EXTS)
+                rfd::AsyncFileDialog::new().add_filter("DesignCraft, IDML or InDesign", DOC_EXTS)
             };
             // Relink to Folder: the browser's folder picker hands over every graphic in the
             // chosen folder; they arrive together, to relink in one step.
@@ -546,6 +546,36 @@ async fn pick_folder_files(wanted: &[String]) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Trigger a browser download of `bytes` named after the last component of `path`.
+fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "designcraft".into());
+    let window = web_sys::window().ok_or("no window")?;
+    let document = window.document().ok_or("no document")?;
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type(mime_for(&name));
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(js)?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js)?;
+    let a: web_sys::HtmlAnchorElement = document.create_element("a").map_err(js)?.dyn_into().map_err(|_| "not an anchor")?;
+    a.set_href(&url);
+    a.set_download(&name);
+    a.style().set_property("display", "none").map_err(js)?;
+    let body = document.body().ok_or("no body")?;
+    body.append_child(&a).map_err(js)?;
+    a.click();
+    a.remove();
+    // Revoke after the click has been dispatched; the download keeps its own reference.
+    let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
+        web_sys::Url::revoke_object_url(&url).ok();
+    });
+    // The download has started; a missed revoke only keeps the blob until the page closes.
+    if let Err(e) = window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000) {
+        log::warn!("could not schedule revoking the download URL: {}", js(e));
+    }
+    Ok(())
+}
+
 /// The most files a folder hands over (picked or dropped), and the most bytes in all.
 const MAX_PACKAGE_FILES: usize = 2000;
 // The bytes are copied a few times on the way (base64 for the command, then decoded), so the
@@ -559,7 +589,8 @@ const MAX_PACKAGE_DEPTH: usize = 16;
 /// document and its Document Fonts). Links and everything else are left unread, as are macOS
 /// resource forks (`._Name.ttf`).
 fn wanted_in_folder(name: &str) -> bool {
-    !name.starts_with("._") && name.rsplit_once('.').is_some_and(|(_, ext)| DOC_EXTS.iter().chain(FONT_EXTS).any(|e| e.eq_ignore_ascii_case(ext)))
+    !name.starts_with("._")
+        && name.rsplit_once('.').is_some_and(|(_, ext)| PACKAGE_DOC_EXTS.iter().chain(FONT_EXTS).any(|e| e.eq_ignore_ascii_case(ext)))
 }
 
 /// Hand a folder's files ((path in the folder, bytes)) to the app, all at once with `request`
@@ -657,7 +688,7 @@ fn install_folder_drop(inbox: Inbox, ctx: egui::Context) {
         let (inbox, ctx) = (inbox.clone(), ctx.clone());
         wasm_bindgen_futures::spawn_local(async move {
             let files = read_dropped(entries).await;
-            deliver_folder(&inbox, &ctx, &ImportRequest { purpose: "folder:drop".into(), target: None, wanted: Vec::new() }, files);
+            deliver_folder(&inbox, &ctx, &ImportRequest { purpose: "folder:drop".into(), ..Default::default() }, files);
         });
     });
     if window.add_event_listener_with_callback_and_bool("drop", on_drop.as_ref().unchecked_ref(), true).is_err() {
@@ -747,34 +778,4 @@ async fn read_dropped(roots: Vec<wasm_bindgen::JsValue>) -> Vec<(String, Vec<u8>
         }
     }
     out
-}
-
-/// Trigger a browser download of `bytes` named after the last component of `path`.
-fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
-    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
-    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "designcraft".into());
-    let window = web_sys::window().ok_or("no window")?;
-    let document = window.document().ok_or("no document")?;
-    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type(mime_for(&name));
-    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(js)?;
-    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js)?;
-    let a: web_sys::HtmlAnchorElement = document.create_element("a").map_err(js)?.dyn_into().map_err(|_| "not an anchor")?;
-    a.set_href(&url);
-    a.set_download(&name);
-    a.style().set_property("display", "none").map_err(js)?;
-    let body = document.body().ok_or("no body")?;
-    body.append_child(&a).map_err(js)?;
-    a.click();
-    a.remove();
-    // Revoke after the click has been dispatched; the download keeps its own reference.
-    let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
-        web_sys::Url::revoke_object_url(&url).ok();
-    });
-    // The download has started; a missed revoke only keeps the blob until the page closes.
-    if let Err(e) = window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000) {
-        log::warn!("could not schedule revoking the download URL: {}", js(e));
-    }
-    Ok(())
 }

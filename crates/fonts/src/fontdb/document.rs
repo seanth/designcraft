@@ -27,6 +27,19 @@ impl FontDb {
     /// are untrusted: a file that isn't a font is skipped with a note, like one over a limit. No
     /// font: scope 0.
     pub fn load_document_font_files(&self, files: Vec<(String, Vec<u8>)>) -> DocumentFonts {
+        self.document_font_files(files, 0)
+    }
+
+    /// [`FontDb::load_document_font_files`] adding to the fonts of `scope` (a document's, as
+    /// [`FontDb::load_document_fonts`] or this gave it; 0: none): a new scope holds the files'
+    /// faces, then those of `scope` the files don't replace (a face of the same family and style
+    /// comes from the files now: a font dropped again, edited, takes over). `scope` itself is left
+    /// for its owner to close. The files are counted against the limits on their own.
+    pub fn add_document_font_files(&self, scope: u32, files: Vec<(String, Vec<u8>)>) -> DocumentFonts {
+        self.document_font_files(files, scope)
+    }
+
+    fn document_font_files(&self, files: Vec<(String, Vec<u8>)>, keep: u32) -> DocumentFonts {
         let mut out = DocumentFonts::default();
         let mut files: Vec<(String, Vec<u8>)> = files.into_iter().filter(|(name, _)| is_document_font_name(name)).collect();
         files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -66,9 +79,17 @@ impl FontDb {
                 }
             }
         }
+        out.faces = own.len();
+        if keep != 0 && !own.is_empty() {
+            let kept = self.scopes.read().unwrap_or_else(PoisonError::into_inner).get(&keep).cloned();
+            for f in kept.iter().flat_map(|k| k.iter()) {
+                if !own.iter().any(|o| o.family.eq_ignore_ascii_case(&f.family) && o.style.eq_ignore_ascii_case(&f.style)) {
+                    own.push(f.clone());
+                }
+            }
+        }
         if !own.is_empty() {
             out.scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
-            out.faces = own.len();
             self.scopes.write().unwrap_or_else(PoisonError::into_inner).insert(out.scope, own.into());
         }
         out
@@ -114,5 +135,25 @@ mod tests {
         assert!(!db.scoped(0).face(family, "Regular").family.eq_ignore_ascii_case(family), "other documents don't see it");
         db.close_scope(r.scope);
         assert_eq!(db.load_document_font_files(vec![("x.ttf".into(), Vec::new())]).scope, 0, "no font: no scope");
+    }
+
+    /// Fonts added to a document's fonts: a new scope with both, the added file taking over a
+    /// family and style the document had; the old scope stays for its owner to close.
+    #[test]
+    fn added_fonts_join_the_document_fonts_and_take_over() {
+        let db = FontDb::global();
+        let (a, b) = ("Added Fonts Test A", "Added Fonts Test B");
+        let first = db.load_document_font_files(vec![("a.ttf".into(), font_with(a, &['H']).unwrap())]);
+        let edited = crate::testing::font_with_glyph(a, &['H'], 'O').unwrap();
+        let r = db.add_document_font_files(first.scope, vec![("b.ttf".into(), font_with(b, &['H']).unwrap()), ("a2.ttf".into(), edited)]);
+        assert_eq!(r.faces, 2, "the added files' faces");
+        assert_ne!(r.scope, first.scope);
+        let fonts = db.scoped(r.scope);
+        assert!(fonts.face(b, "Regular").family.eq_ignore_ascii_case(b));
+        assert_eq!(fonts.face(a, "Regular").source.path().and_then(|p| p.to_str()), Some("a2.ttf"), "the dropped file takes over");
+        assert!(db.scoped(first.scope).face(a, "Regular").family.eq_ignore_ascii_case(a), "the old scope is still there");
+        db.close_scope(first.scope);
+        db.close_scope(r.scope);
+        assert_eq!(db.add_document_font_files(0, vec![("x.txt".into(), Vec::new())]).scope, 0);
     }
 }

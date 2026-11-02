@@ -9564,6 +9564,16 @@ fn find_font(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
         crate::rtl::label(ui, d.s("error"));
     }
     let missing = fonts.iter().filter(|f| f["missing"] == true || f["styleMissing"] == true).count();
+    if missing > 0 {
+        crate::rtl::label(
+            ui,
+            egui::RichText::new(crate::i18n::tr(
+                &app.ui.language,
+                "Drop font files on the window to use them with this document until DesignCraft quits.",
+            ))
+            .color(crate::theme::Tokens::get(ui.ctx()).text_dim),
+        );
+    }
     // In a browser, which can't look beside the file: the package folder (or its Document Fonts
     // folder) brings the document's own fonts, as opening it on the desktop does.
     if missing > 0
