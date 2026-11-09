@@ -61,7 +61,7 @@ impl FontDb {
                 continue;
             }
             let data = Arc::new(data);
-            let source = FontSource::Document(std::path::PathBuf::from(&name));
+            let source = FontSource::DocumentContents(name.clone());
             let faces: Vec<Arc<FontFace>> = enumerate_faces(&data)
                 .into_iter()
                 .filter_map(|(i, family, style, coords)| make_face(FontBytes::Owned(data.clone()), source.clone(), i, family, style, coords))
@@ -131,7 +131,8 @@ mod tests {
         assert_eq!(r.skipped, ["Document Fonts/broken.ttf: not a font DesignCraft can read"]);
         let face = db.scoped(r.scope).face(family, "Regular");
         assert!(face.family.eq_ignore_ascii_case(family));
-        assert_eq!(face.source.path().and_then(|p| p.to_str()), Some("Document Fonts/a.ttf"));
+        assert_eq!(face.source, crate::FontSource::DocumentContents("Document Fonts/a.ttf".into()));
+        assert_eq!(face.source.path(), None, "no file here is behind it");
         assert!(!db.scoped(0).face(family, "Regular").family.eq_ignore_ascii_case(family), "other documents don't see it");
         db.close_scope(r.scope);
         assert_eq!(db.load_document_font_files(vec![("x.ttf".into(), Vec::new())]).scope, 0, "no font: no scope");
@@ -150,7 +151,7 @@ mod tests {
         assert_ne!(r.scope, first.scope);
         let fonts = db.scoped(r.scope);
         assert!(fonts.face(b, "Regular").family.eq_ignore_ascii_case(b));
-        assert_eq!(fonts.face(a, "Regular").source.path().and_then(|p| p.to_str()), Some("a2.ttf"), "the dropped file takes over");
+        assert_eq!(fonts.face(a, "Regular").source, crate::FontSource::DocumentContents("a2.ttf".into()), "the dropped file takes over");
         assert!(db.scoped(first.scope).face(a, "Regular").family.eq_ignore_ascii_case(a), "the old scope is still there");
         db.close_scope(first.scope);
         db.close_scope(r.scope);

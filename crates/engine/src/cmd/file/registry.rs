@@ -47,7 +47,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{paths?: [path], files?: [{path, base64}]} — fonts dropped on the window (font files, folders of them, zips of them) join the active document's own fonts until DesignCraft quits, ahead of installed fonts of the same name, as its Document Fonts are; a font added again takes over. Nothing is written beside the document. Not an edit → {faces: faces added, warnings: files skipped}",
             has_doc, super::package::font_add),
         cmd!(noundo "font.loadDocumentFonts", "Load Document Fonts", [], None,
-            "{files: [{path, base64}]} — the font files (.ttf, .otf, .ttc, .otc) of a folder handed over become the active document's own fonts, in place of any it had: those in a `Document Fonts` folder among the files, else all of them. For a document opened by itself in a browser, which can't look beside it. Not an edit → {documentFonts: faces loaded, warnings: files skipped}",
+            "{files: [{path, base64}], index?} — the font files (.ttf, .otf, .ttc, .otc) of a folder handed over become the own fonts of document `index` (default: the active one; it stays active), in place of any it had: those in a `Document Fonts` folder among the files, else all of them. For a document opened by itself in a browser, which can't look beside it. Not an edit → {documentFonts: faces loaded, warnings: files skipped}",
             has_doc, super::package::load_document_fonts),
         cmd!(noundo "file.openRecent", "Open Recent File", [], None,
             "{index} — reopen entry `index` of File › Open Recent (as file.open); a file that is gone is an error and stays listed",
