@@ -262,7 +262,8 @@ impl Notes {
         };
         let Some(note) = self.notes.get(k) else { return (Arc::default(), NoteMetrics::default()) };
         let (text, first) = compose_part(&note.text, number);
-        let mut parts = vec![NotePart { id: note.id, label: o.label(number, true), text, source: Arc::from(note.text.text.as_str()), dy: 0.0, m: first }];
+        let mut parts =
+            vec![NotePart { id: note.id, label: o.label(number, true), text, source: Arc::from(note.text.text.as_str()), dy: 0.0, m: first }];
         for n in note.nested() {
             let Some(&num) = self.nested.get(&n.id) else { continue };
             let label = o.label(num, true);
