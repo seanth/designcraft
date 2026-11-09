@@ -85,6 +85,10 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
         // The content decides first: a file's extension may be missing or wrong. The extension
         // then routes files whose content isn't recognised to the reader that explains why.
         let ext = std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).unwrap_or_default().to_ascii_lowercase();
+        // A zipped package: its document, with the fonts of the Document Fonts folder beside it.
+        if super::package::is_zipped_package(&bytes) {
+            return super::package::open_zipped_package(s, &bytes);
+        }
         let native = designcraft_format::is_designcraft(&bytes) || bytes.trim_ascii_start().starts_with(b"{");
         if designcraft_idml::is_idml(&bytes) || (!native && (crate::cmd::interchange::is_indd(path, &bytes) || ext == "idml")) {
             return crate::cmd::interchange::open_idml(s, p);
