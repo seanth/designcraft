@@ -32,6 +32,8 @@ upstream PR from `personal` or `main`. Every branch above passes the checks on i
 
 To bring in new upstream work: **Sync fork** on `main`, then merge `main` into `personal`.
 
+Before posting a PR upstream, go through [`PR_CHECKLIST.txt`](PR_CHECKLIST.txt): what reviewers raised on our PRs so far, as a list to check against.
+
 ## What `personal` contains
 
 ### Our fixes (meant for upstream)

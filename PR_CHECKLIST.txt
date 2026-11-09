@@ -1,0 +1,225 @@
+PR CHECKLIST: before posting a pull request to storytold/designcraft
+=====================================================================
+
+This file lives only on the `personal` branch of seanth/designcraft, next to PERSONAL_BUILD.md.
+It is a reference for us, not part of any upstream PR.
+
+Written 2026-11-08 from what reviewers (CodeRabbit, FredApps, aiongg) actually raised on #1105,
+#1190, #1195, #1244, #2101, #2105 and #2140. Each item gives the PR where it came up, so the
+reason can be looked up. Upstream's own rules are in AGENTS.md (house rules 1-15, the Rust rules
+and the licence allowlist); this list does not repeat them all, only the ones that cost us a
+review round.
+
+Go through it before the first push, and again before each push that answers a review.
+
+
+1. SCOPE
+--------
+
+[ ] One change per PR. If a second behaviour comes along (a drop that relinks, a dialog that
+    also does something else), split it into its own branch now, not after review.
+    (#1244: drop-to-relink split off to `drop-relink` after aiongg asked.)
+
+[ ] Matches InDesign, or says plainly that it doesn't. A feature InDesign lacks gets "the
+    maintainers must accept it" every time. Say so in the title or description, and say what
+    happens in IDML for it (written out? kept in a label? dropped with a warning?).
+    (#2101 custom marks, #2105 nested footnotes, #1244 drops.)
+
+[ ] No behaviour change to the desktop app unless the PR is about that. Shared helpers that a
+    web fix touches can change desktop results quietly.
+    (#1244: link_file_name changed how desktop Relink named graphics.)
+
+[ ] The branch is based on current upstream `main`, merged in before posting. Check the PR
+    doesn't conflict with our other open PRs; if it does, say which one, and which lands first.
+    (#2101 and #2105 conflict in nine files.)
+
+
+2. NEVER CRASH, AND HOSTILE INPUT
+---------------------------------
+
+Every size, count and depth that comes from a file, a command parameter, a drop or a browser is
+hostile. For each one, ask: what is the most it can be, and what caps it?
+
+[ ] Allocations are capped BEFORE reading or parsing, not after. A per-item cap is not enough:
+    there must be a total, and each read is capped at what the total leaves.
+    (#2140: zip fonts read at 256 MB each before the 512 MB total applied; drop-fonts had the
+    same; #2101: a JSON label parsed in full before the 64-mark cap.)
+
+[ ] Recursion is bounded: nested packages, nested notes, anything that can contain itself.
+    A depth limit, or a path that can't re-enter.
+    (#2140: a zip inside a zip; #2105: notes deeper than the limit kept but never shown.)
+
+[ ] A limit applies on read (opening a file) as well as on edit (a command).
+    (#2105: 5 levels enforced on insert, not on load.)
+
+[ ] Memory multiplication is counted: base64 (x1.33), decode, copy, the asset's own copy.
+    In the browser, keep the peak well under what a tab gets.
+    (#1244: a 1 GB folder cap was about 3 GB at the peak; #2140: 1 GB zip document on wasm.)
+
+[ ] One bad input doesn't abort the batch. Report it and carry on with the rest, unless the
+    user chose that one item.
+    (#1244: one unreadable file stopped Relink to Folder.)
+
+[ ] A partial read (stopped at a limit) is never treated as a complete one.
+    (#2140: a cut-short folder drop looked like "fonts only".)
+
+
+3. PATHS AND FILES
+------------------
+
+[ ] Nothing reads or copies from a path that came from input the user didn't choose as a path.
+    A name handed over with bytes is a label, not a file to open.
+    (#2140: File > Package copied whatever file was at a font's recorded name.)
+
+[ ] Extensions: check only for the extensions we write (.designcraft, .idml), never "has any
+    extension". "Issue 3.1" has no extension.
+    (#1105.)
+
+[ ] Two things arriving at once stay two. Anything delivered asynchronously (picked folders,
+    drops) carries its own batch id.
+    (#2140: two folders in one frame merged into one.)
+
+
+4. DOCUMENT STATE
+-----------------
+
+[ ] Undo and redo: if the change isn't an edit (fonts loaded, a zero point), undo must not
+    bring back the old state of it.
+    (#2140: undo restored a closed font scope.)
+
+[ ] The journal: every journaled command must be replayable (docs/architecture.md). Commands
+    that take bytes journal them, as file.place {base64} does. Don't strip fields.
+    (#1244.)
+
+[ ] Saved/unsaved and recovery: a save that loses content must not mark the document saved or
+    drop its recovery entry without asking.
+    (#1105: IDML saves that drop editorial notes.)
+
+[ ] Async results go to the document that asked, without activating it.
+    (#2140: Find Font's folder switched the active document.)
+
+[ ] Copy-on-write: don't Arc::make_mut every story on every edit; check read-only first and
+    copy only what changes. Otherwise the compose cache is thrown away each time.
+    (#2105: fix_note_ids.)
+
+[ ] A preference or state is counted as stored only after the write succeeds, and a deferred
+    write asks for a frame (egui draws nothing just because time passes).
+    (#1105.)
+
+
+5. UI
+-----
+
+[ ] Text fields that feed a capped command are capped in the field (char_limit), and the value
+    is cut before sending: a command error after the dialog closed loses the user's edits.
+    (#2101.)
+
+[ ] Use the project's widgets (craft_ui::ComboBox, not egui::ComboBox): clippy's
+    disallowed-types fails CI.
+    (#1105.)
+
+[ ] Stacking order: a click goes to the topmost thing under it.
+    (#1195: an anchored object under another frame took the click.)
+
+[ ] Locks: every command that changes an object checks locked objects, locked frames and locked
+    layers, not just the obvious ones.
+    (#1195: Options and Release didn't.)
+
+[ ] A style applies only to the part it belongs to (a mark, not its prefix, suffix or
+    separator).
+    (#2101.)
+
+[ ] A picker or drop that finds nothing to do says so, and doesn't read files for nothing.
+    (#1244: Relink to Folder with nothing missing.)
+
+[ ] Browser event listeners are owned by the call and removed afterwards, not forget()-ed.
+    (#1244.)
+
+[ ] New user-facing strings: check the translation test (crates/ui-egui/src/i18n/tests.rs) and
+    add the Swedish line if the string is in its list; menu items go where the menu-order tests
+    expect.
+    (#2140.)
+
+
+6. TESTS
+--------
+
+[ ] Every fix has a test that FAILS WITHOUT THE FIX. Check it: take the fix out, run the test,
+    see it fail, put the fix back.
+
+[ ] A test of "not X" must also fail when X happens. Count-based checks often pass both ways.
+    (#2105: the EPUB nesting test passed for siblings too.)
+
+[ ] Test the limit with small limits passed in, not by building a 512 MB file.
+    (#2140 read_fonts, drop-fonts fonts_at_path.)
+
+[ ] When a behaviour changes on purpose, update the old test that asserted the old behaviour,
+    and say so in the reply.
+    (#1244: an unreadable file was an error, now it's reported.)
+
+
+7. DOCS AND COMMENTS
+--------------------
+
+[ ] Doc comments say what the code does now. After any change in scope, search the diff for
+    the old behaviour's words (e.g. "drop") and fix every comment, the command's params doc,
+    main.rs/module docs and ROADMAP.
+    (#1244: three comments still said drops relink after the split.)
+
+[ ] A doc comment sits on the function it describes (moving code moves comments away).
+    (#1195; #1244 file_name_of.)
+
+[ ] ROADMAP.md progress line, and docs/target-app-parity.md: the feature line AND the
+    "Last updated / Change" status line at the top.
+    (#2105.)
+
+[ ] Command params docs list every parameter, including new optional ones.
+    (#1195, #2140 font.loadDocumentFonts index.)
+
+
+8. CHECKS BEFORE PUSHING
+------------------------
+
+[ ] cargo fmt --all --check
+[ ] cargo clippy --workspace --all-targets -- -D warnings
+[ ] cargo test --workspace (all of it, not just the crate you changed; a change in one crate
+    broke another's test more than once)
+[ ] cargo xtask layers and cargo xtask assets
+[ ] The wasm build can't run in Claude's workspace: say so in the PR. If web code changed,
+    build the web package on the Mac before posting when possible.
+
+Builds in a shared target directory can be stale across worktrees: touch the sources or use a
+separate CARGO_TARGET_DIR before trusting a result.
+
+
+9. THE PR TEXT AND REPLIES
+--------------------------
+
+[ ] No agent attribution anywhere: no "Generated with Claude Code" line, no Co-Authored-By.
+    (House rule 15.)
+
+[ ] Report only what ran. Name what was tested, and what couldn't be (wasm).
+    (House rule 7.)
+
+[ ] Every claim in the description or a reply is checked against the code first. Don't
+    describe limitations or behaviour from memory.
+
+[ ] Answer every comment, including the ones not acted on, with the reason (e.g. "that's
+    upstream's rule, not this PR's").
+    (#1105 name.pdf.)
+
+[ ] A title states the change plainly; no "(bug? feature?)".
+    (#1195.)
+
+[ ] When the scope changes after review, update the title and description too.
+    (#1244.)
+
+[ ] Reply within 7 days of a `waiting_author` status (house rule 14). Batch fixes into one
+    push where possible: each push brings a new CodeRabbit round.
+
+
+10. AFTER IT LANDS
+------------------
+
+[ ] Sync fork on `main`, merge into `personal`, remove its row from PERSONAL_BUILD.md, update
+    any PR that conflicted with it, and delete the branch once nothing needs it.
