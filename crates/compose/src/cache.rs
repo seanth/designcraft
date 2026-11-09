@@ -271,6 +271,7 @@ impl Cache {
                 running,
                 label: None,
                 label_style: None,
+                note_numbers: None,
                 xrefs: with_xrefs.then(|| self.xref_index(doc)),
                 placed,
             },
