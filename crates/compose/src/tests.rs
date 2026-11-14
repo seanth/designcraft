@@ -10229,6 +10229,8 @@ mod flexible_word_spacing {
             assert_eq!(first_line(&text, "crowds", 0.1, composer, true), HEAD, "{composer:?}");
         }
     }
+}
+
 /// Custom footnote marks: the reference and the footnote text show the user's mark, each mark in
 /// its own character style on top of the reference's (a font that has the glyph), and the
 /// numbering rules (restart, start at) apply as to numbers.
