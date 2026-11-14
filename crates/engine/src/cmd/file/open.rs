@@ -84,6 +84,10 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
         let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
         // The content decides first: a file's extension may be missing or wrong. The extension
         // then routes files whose content isn't recognised to the reader that explains why.
+        // A zipped package: its document, with the fonts of the Document Fonts folder beside it.
+        if super::package::is_zipped_package(&bytes) {
+            return super::package::open_zipped_package(s, &bytes);
+        }
         let format = craft_file_formats::detect(path, &bytes);
         let native = matches!(
             craft_file_formats::detect("", &bytes),
