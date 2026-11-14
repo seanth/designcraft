@@ -5,7 +5,7 @@ impl<'a> Ex<'a> {
     // ---------- designmap ----------
 
     /// `designmap.xml`: the document's root element, its parts, and the settings InDesign has no
-    /// place for (custom footnote marks) as document labels.
+    /// place for (custom footnote marks, the structure of nested footnotes) as document labels.
     pub(super) fn designmap(&mut self, masters: &[(String, Vec<u8>)], spreads: &[(String, Vec<u8>)], stories: &[(String, Vec<u8>)]) -> Vec<u8> {
         let d = self.d;
         let story_list: Vec<String> = d.stories.keys().map(|k| uid(k.0)).collect();
@@ -18,11 +18,17 @@ impl<'a> Ex<'a> {
             &d.layers.first().map(|l| uid(l.id.0)).unwrap_or_else(|| "n".into()),
         ));
         // Settings InDesign has no place for, kept as document labels it carries along.
+        // One Label holds them all.
+        let mut label = El::new("Label");
         if let Some(c) = d.footnote_options.custom()
             && let Some(json) = footnote_marks_label(c, d.footnote_options.style)
         {
-            let mut label = El::new("Label");
             label.push(El::new("KeyValuePair").attr("Key", names::FOOTNOTE_MARKS_LABEL).attr("Value", json));
+        }
+        if let Some(json) = nested_footnotes_label(d) {
+            label.push(El::new("KeyValuePair").attr("Key", names::NESTED_FOOTNOTES_LABEL).attr("Value", json));
+        }
+        if !label.children.is_empty() {
             let mut props = El::new("Properties");
             props.push(label);
             root.push(props);
@@ -391,6 +397,27 @@ fn text_variable_el(v: &designcraft_doc::vars::TextVariable) -> El {
         e.push(s);
     }
     e
+}
+
+/// The nested footnotes of `d` as written into the IDML's footnotes (see
+/// `Footnote::flattened`), kept whole for DesignCraft: for each footnote with nested notes, its
+/// story (`Self`), its index, its flattened text and its own text with the nested notes. `None`
+/// when no footnote has nested notes.
+fn nested_footnotes_label(d: &Document) -> Option<String> {
+    let o = &d.footnote_options;
+    let mut entries = Vec::new();
+    for st in d.stories.values() {
+        if !st.notes.iter().any(|n| !n.text.notes.is_empty()) {
+            continue;
+        }
+        let numbers = d.nested_note_numbers(st.id);
+        let mark = |id: u64| numbers.get(&id).map_or_else(String::new, |&k| o.label(k, false));
+        for (k, n) in st.notes.iter().enumerate().filter(|(_, n)| !n.text.notes.is_empty()) {
+            let flat = n.flattened(&mark, &o.separator);
+            entries.push(serde_json::json!({"story": uid(st.id.0), "index": k, "flat": flat.text, "text": n.text}));
+        }
+    }
+    (!entries.is_empty()).then(|| serde_json::Value::Array(entries).to_string())
 }
 
 impl Ex<'_> {

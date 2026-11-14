@@ -147,6 +147,10 @@ pub const FOOTNOTE_MARKS_STYLE: &str = "style";
 /// [`FOOTNOTE_MARKS_LABEL`]'s value is read only up to this size: 64 marks of 32 characters and
 /// their style names fit many times over, and a larger one isn't parsed at all.
 pub const MAX_FOOTNOTE_MARKS_LABEL: usize = 64 * 1024;
+/// The document label (a designmap `KeyValuePair`) that keeps nested footnotes whole: InDesign
+/// has no footnotes in footnotes, so its footnotes hold them written out (marks and forced line
+/// breaks), and DesignCraft puts them back from this label.
+pub const NESTED_FOOTNOTES_LABEL: &str = "designcraft.nestedFootnotes";
 
 pub const PARA_BUILTINS: &[(&str, &str)] = &[("[No Paragraph Style]", "$ID/[No paragraph style]"), ("[Basic Paragraph]", "$ID/NormalParagraphStyle")];
 pub const CHAR_BUILTINS: &[(&str, &str)] = &[("[None]", "$ID/[No character style]")];
