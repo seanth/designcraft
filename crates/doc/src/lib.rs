@@ -62,7 +62,7 @@ pub use ids::*;
 pub use index::{INDEX_MARK, IndexRef};
 pub use item::*;
 pub use notes::{
-    CustomMarks, FOOTNOTE_REF, FOOTNOTE_TABLE, Footnote, FootnoteOptions, MAX_CUSTOM_MARKS, MAX_MARK_CHARS, MAX_NOTE_DEPTH, MarksAfter, NoteMark,
+    CustomMarks, FOOTNOTE_REF, FOOTNOTE_TABLE, Footnote, FootnoteOptions, MAX_CUSTOM_MARKS, MAX_MARK_CHARS, MAX_MARK_STYLE_CHARS, MAX_NOTE_DEPTH, MarksAfter, NoteMark,
 };
 pub use page::*;
 pub use selection::*;
