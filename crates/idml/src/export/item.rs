@@ -118,6 +118,12 @@ impl<'a> Ex<'a> {
             }
         }
         el.push(text_wrap_pref(&it.wrap));
+        let export_option = object_export_option(it);
+        if !matches!(it.content, Content::Graphic(_))
+            && let Some(x) = export_option.clone()
+        {
+            el.push(x);
+        }
         match &it.content {
             Content::Group { items } => {
                 for c in items {
@@ -137,6 +143,10 @@ impl<'a> Ex<'a> {
                             .attr("FittingOnEmptyFrame", names::fitting_out(g.auto_fit))
                             .attr("FittingAlignment", names::anchor_out(g.fit_align)),
                     );
+                }
+                // InDesign writes a graphic frame's export options after its fitting, before the image.
+                if let Some(x) = export_option {
+                    el.push(x);
                 }
                 if let Some(asset) = d.assets.get(&g.asset) {
                     let e = self.image_el(asset, g);
@@ -394,6 +404,19 @@ impl<'a> Ex<'a> {
 }
 
 /// `rule_color` is the IDML reference of the column rule's swatch.
+/// An item's Object Export Options as InDesign writes them: typed-in alt text (`SourceCustom`,
+/// tagged from structure), or decorative (`SourceDecorativeImage`, an artifact). None for an item
+/// with neither, so its IDML is as before; InDesign takes its defaults for the other options.
+fn object_export_option(it: &Item) -> Option<El> {
+    let decorative = it.export_options.artifact;
+    if it.alt_text.is_empty() && !decorative {
+        return None;
+    }
+    let tag = if decorative { "TagArtifact" } else { "TagFromStructure" };
+    let (source, text) = if it.alt_text.is_empty() { ("SourceDecorativeImage", "$ID/") } else { ("SourceCustom", it.alt_text.as_str()) };
+    Some(El::new("ObjectExportOption").attr("AltTextSourceType", source).attr("CustomAltText", text).attr("ApplyTagType", tag))
+}
+
 /// `TextWrapPreference` of a page item or a placed graphic.
 fn text_wrap_pref(w: &designcraft_doc::TextWrap) -> El {
     let paths: Vec<_> = w.path.iter().filter(|p| !p.is_empty()).map(path_geometry_value).collect();
