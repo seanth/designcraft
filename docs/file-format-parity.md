@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-14 · **Change:** minor (native format 5 stores linked placed images as records with proxies; package PDF soft effects, hyperlinks and export warnings; PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-18 · **Change:** minor (IDML reads and writes alt text and decorative images from Object Export Options, #2974; native format 5 stores linked placed images as records with proxies; package PDF soft effects, hyperlinks and export warnings; PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every format InDesign 2026 reads or writes, with DesignCraft's support, fidelity and tests. The
 InDesign list comes from its bundle's `Info.plist` (`CFBundleDocumentTypes`,
@@ -122,6 +122,7 @@ up to 30 points.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | IDML reads and writes alt text: custom alt text and decorative images (tagged-PDF artifacts) from `ObjectExportOption`, on frames, groups, anchored objects and through object styles; metadata-sourced alt text imports as none with a warning; export writes the element only where set (#2974). Score unchanged |
 | 2026-11-14 | minor | Native format 5: linked assets saved as records plus proxies; pre-5 documents migrate to links on open and save; packages copy linked originals hash-checked |
 | 2026-10-19 | minor | PDF/X-4 export and `validate-pdf` report visible unembedded fonts by name and page, including placed forms; invisible text is exempt, operation- or depth-limited checks report incompleteness, and automatic font repair remains missing (#909) |
 | 2026-10-15 | minor | IDML retains liquid versus ruler guide types on document and parent pages, with literal XML and mixed-guide round-trip coverage; object liquid constraints remain unsupported (#872) |

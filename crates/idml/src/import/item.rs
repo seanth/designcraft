@@ -124,6 +124,11 @@ impl<'r> Importer<'r> {
             }
             it.wrap = tw;
         }
+        // Object Export Options: alt text, and whether the item is decorative (from the item, then
+        // its object style).
+        if let Some(x) = self.with_style(e, "ObjectExportOption") {
+            self.object_export_option(&x, &mut it, model_item.self_id().unwrap_or("an item"));
+        }
         // Type on a path.
         if !matches!(&model_item.kind, craft_idml::model::ItemKind::TextFrame)
             && let Some(tp) = model_item.text_path()
@@ -149,6 +154,32 @@ impl<'r> Importer<'r> {
         }
         self.read_content(e, &model_item, tag, id, &mut it);
         Some(it)
+    }
+
+    /// Alt text and decoration from an `ObjectExportOption`, as InDesign writes them. Typed-in
+    /// alt text (`SourceCustom`) is read; a decorative image (`SourceDecorativeImage`, or an
+    /// artifact in tagged PDF) is an artifact with none. InDesign works out alt text from an image's
+    /// XMP metadata when it exports, which DesignCraft doesn't: such an item gets none, and a
+    /// warning says so. `SourceXMLStructure`, InDesign's default, is no alt text of its own.
+    fn object_export_option(&mut self, x: &El, it: &mut Item, who: &str) {
+        let source = x.get("AltTextSourceType").unwrap_or_default();
+        let decorative = source == "SourceDecorativeImage" || x.get("ApplyTagType") == Some("TagArtifact");
+        if decorative {
+            it.export_options.artifact = true;
+        }
+        match source {
+            "SourceCustom" => {
+                if let Some(text) = idml_string(x.get("CustomAltText")) {
+                    it.alt_text = text.to_string();
+                }
+            }
+            "SourceXMPTitle" | "SourceXMPDescription" | "SourceXMPHeadline" | "SourceXMPOther" if !decorative => {
+                self.warnings.push(format!(
+                    "{who}: alt text from the image's metadata ({source}) is not read; it has none (Object › Object Export Options… sets it)"
+                ));
+            }
+            _ => {}
+        }
     }
 
     fn read_content(&mut self, e: &El, model_item: &craft_idml::model::PageItem, tag: &str, id: ItemId, item: &mut Item) {
@@ -421,4 +452,9 @@ fn wrap_path_of(pg: &El) -> std::result::Result<PathData, &'static str> {
         return Err("no points");
     }
     Ok(path)
+}
+
+/// An IDML string attribute's value, with `$ID/` (InDesign's empty string) and "" as none.
+fn idml_string(v: Option<&str>) -> Option<&str> {
+    v.filter(|s| !s.is_empty() && *s != "$ID/")
 }

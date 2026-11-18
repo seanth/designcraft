@@ -2688,6 +2688,25 @@ fn layers_import_and_export_in_stacking_order() {
     assert_eq!(back.spreads[0].items[0].layer, back.layers[1].id);
 }
 
+/// Layer Options › Lock Guides is IDML's `LockGuides`: read, and written back (it was always
+/// written as false).
+#[test]
+fn layer_lock_guides_round_trips() {
+    let designmap = r#"<Document xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" Self="d">
+      <Layer Self="L1" Name="Grid" LockGuides="true" ShowGuides="true"/>
+      <Layer Self="L2" Name="Art"/>
+      <idPkg:Spread src="Spreads/Spread_s.xml"/>
+    </Document>"#;
+    let spread = r#"<idPkg:Spread xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging">
+      <Spread Self="s"><Page Self="p" GeometricBounds="0 0 100 100" ItemTransform="1 0 0 1 0 0"/></Spread>
+    </idPkg:Spread>"#;
+    let d = import_idml(&zip_files(&[("designmap.xml", designmap), ("Spreads/Spread_s.xml", spread)])).unwrap();
+    let lock = |d: &Document, name: &str| d.layers.iter().find(|l| l.name == name).unwrap().lock_guides;
+    assert!(lock(&d, "Grid") && !lock(&d, "Art"));
+    let back = import_idml(&export_idml(&d)).unwrap();
+    assert!(lock(&back, "Grid") && !lock(&back, "Art"));
+}
+
 /// Synthetic forward references: both a body anchor and a footnote anchor own
 /// a group containing a text frame whose story is serialized later.
 #[test]
@@ -3124,6 +3143,22 @@ fn hostile_table_spans_are_clamped_before_arithmetic() {
     let table = document.stories.values().flat_map(|s| s.tables.values()).next().unwrap();
     assert_eq!(table.cell(1, 1).unwrap().row_span, 1);
     assert_eq!(table.cell(1, 1).unwrap().col_span, 2);
+}
+
+/// Spans are read as numbers: a fraction rounds down, a span past the table (even one too large for
+/// 32 bits) reaches its edge, and anything under 1 or not a number spans one cell.
+#[test]
+fn numeric_table_spans_round_down_and_stop_at_the_table_edge() {
+    for (raw, rows, cols) in
+        [("1.5", 1, 1), ("2.5", 2, 2), ("4000000000", 2, 3), ("1e300", 2, 3), ("0", 1, 1), ("-3", 1, 1), ("NaN", 1, 1), ("x", 1, 1)]
+    {
+        let story = CASCADE_STORY.replace("Name=\"0:0\"", &format!("Name=\"0:0\" RowSpan=\"{raw}\" ColumnSpan=\"{raw}\""));
+        let document = import_idml(&fixture_with_table_styles(CASCADE_STYLES, &story)).unwrap();
+        document.check().unwrap();
+        let table = document.stories.values().flat_map(|s| s.tables.values()).next().unwrap();
+        let cell = table.cell(0, 0).unwrap();
+        assert_eq!((cell.row_span, cell.col_span), (rows, cols), "{raw}");
+    }
 }
 
 #[test]
@@ -3740,6 +3775,129 @@ fn em_box_first_baseline_offset_round_trips() {
     assert_eq!(first(&import_idml(&export_idml(&d)).unwrap()), FirstBaseline::EmboxHeight);
     let unknown = inset_fixture(r#"<TextFramePreference FirstBaselineOffset="SomethingElse"/>"#, "");
     assert_eq!(first(&unknown), FirstBaseline::Ascent);
+}
+
+/// The fixture with Object Export Options on its graphic frame (before its image) and its oval,
+/// written the way InDesign writes them: every option, `$ID/` for an empty string, and a
+/// `Properties` child.
+fn export_options_fixture(graphic: &str, oval: &str) -> Vec<u8> {
+    let options = |attrs: &str| {
+        format!(
+            r#"<ObjectExportOption {attrs} ActualTextSourceType="SourceXMLStructure" CustomActualText="$ID/" ImageConversionType="JPEG" ImageAlignment="AlignLeft" UseImagePageBreak="false" EpubType="$ID/"><Properties><AltMetadataProperty NamespacePrefix="$ID/" PropertyPath="$ID/"/></Properties></ObjectExportOption>"#
+        )
+    };
+    let oval_tag = r#"<Oval Self="o" ItemTransform="1 0 0 1 0 0" FillColor="Gradient/Fade" StrokeWeight="2" StrokeColor="Color/Brand">"#;
+    let spread = SPREAD
+        .replace(r#"<Image Self="im""#, &format!(r#"{}<Image Self="im""#, options(graphic)))
+        .replace(oval_tag, &format!("{oval_tag}{}", options(oval)));
+    assert!(spread.matches("ObjectExportOption ").count() == 2);
+    zip_files(&[
+        ("designmap.xml", DESIGNMAP),
+        ("Resources/Graphic.xml", GRAPHIC),
+        ("Resources/Styles.xml", STYLES),
+        ("Resources/Preferences.xml", PREFS),
+        ("MasterSpreads/MasterSpread_m1.xml", MASTER),
+        ("Spreads/Spread_sp1.xml", &spread),
+        ("Stories/Story_s1.xml", STORY),
+    ])
+}
+
+/// Each item's alt text and whether it is decorative (an artifact).
+fn alt_texts(d: &Document) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    fn walk(items: &[std::sync::Arc<designcraft_doc::Item>], out: &mut Vec<(String, bool)>) {
+        for it in items {
+            out.push((it.alt_text.clone(), it.export_options.artifact));
+            if let designcraft_doc::Content::Group { items } = &it.content {
+                walk(items, out);
+            }
+        }
+    }
+    for sp in &d.spreads {
+        walk(&sp.items, &mut out);
+    }
+    out
+}
+
+/// Alt text typed in InDesign, and a decorative image, come in from IDML and go back out (#2974).
+#[test]
+fn alt_text_and_decorative_images_round_trip_through_idml() {
+    let bytes = export_options_fixture(
+        r#"AltTextSourceType="SourceCustom" CustomAltText="Drawing of a gnome &amp; a page." ApplyTagType="TagFromStructure""#,
+        r#"AltTextSourceType="SourceDecorativeImage" CustomAltText="$ID/" ApplyTagType="TagArtifact""#,
+    );
+    let r = import_idml_report(&bytes, &|_| None).unwrap();
+    assert!(r.warnings.iter().all(|w| !w.contains("alt text")), "{:?}", r.warnings);
+    let d = r.document;
+    let mut got = alt_texts(&d);
+    got.retain(|(t, a)| !t.is_empty() || *a);
+    got.sort();
+    assert_eq!(got, [(String::new(), true), ("Drawing of a gnome & a page.".to_string(), false)]);
+    let mut back = alt_texts(&import_idml(&export_idml(&d)).unwrap());
+    back.retain(|(t, a)| !t.is_empty() || *a);
+    back.sort();
+    assert_eq!(back, got);
+}
+
+/// InDesign's empty string (`$ID/`) is no alt text, and the default source (XML structure) gives
+/// none; alt text InDesign takes from an image's metadata isn't read, and a warning says so.
+#[test]
+fn alt_text_idml_never_reads_id_slash_and_warns_for_metadata() {
+    let bytes = export_options_fixture(
+        r#"AltTextSourceType="SourceCustom" CustomAltText="$ID/" ApplyTagType="TagFromStructure""#,
+        r#"AltTextSourceType="SourceXMPDescription" CustomAltText="stale" ApplyTagType="TagFromStructure""#,
+    );
+    let r = import_idml_report(&bytes, &|_| None).unwrap();
+    assert!(alt_texts(&r.document).iter().all(|(t, a)| t.is_empty() && !a), "{:?}", alt_texts(&r.document));
+    let warned: Vec<_> = r.warnings.iter().filter(|w| w.contains("alt text")).collect();
+    assert_eq!(warned.len(), 1, "{:?}", r.warnings);
+    assert!(warned[0].contains("SourceXMPDescription"), "{warned:?}");
+    let structure = export_options_fixture(r#"AltTextSourceType="SourceXMLStructure" CustomAltText="$ID/""#, r#"CustomAltText="$ID/""#);
+    let r = import_idml_report(&structure, &|_| None).unwrap();
+    assert!(r.warnings.iter().all(|w| !w.contains("alt text")), "{:?}", r.warnings);
+}
+
+/// An image anchored in text keeps its alt text through IDML too.
+#[test]
+fn an_anchored_image_keeps_its_alt_text_through_idml() {
+    let story = r#"<?xml version="1.0" encoding="UTF-8"?>
+<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging" DOMVersion="16.0">
+  <Story Self="s1">
+    <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
+      <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]">
+        <Content>See </Content>
+        <Rectangle Self="inl" ItemTransform="1 0 0 1 0 0">
+          <Properties><PathGeometry><GeometryPathType PathOpen="false"><PathPointArray>
+            <PathPointType Anchor="0 0"/><PathPointType Anchor="0 10"/><PathPointType Anchor="10 10"/><PathPointType Anchor="10 0"/>
+          </PathPointArray></GeometryPathType></PathGeometry></Properties>
+          <AnchoredObjectSetting AnchoredPosition="InlinePosition"/>
+          <ObjectExportOption AltTextSourceType="SourceCustom" CustomAltText="A small map" ApplyTagType="TagFromStructure"/>
+        </Rectangle>
+        <Content> here.</Content>
+      </CharacterStyleRange>
+    </ParagraphStyleRange>
+  </Story>
+</idPkg:Story>"#;
+    let alt = |d: &Document| -> Vec<String> { d.stories.values().flat_map(|s| s.objects.iter().map(|o| o.item.alt_text.clone())).collect() };
+    let d = import_idml(&fixture_with_story(story)).unwrap();
+    assert_eq!(alt(&d), ["A small map"]);
+    assert_eq!(alt(&import_idml(&export_idml(&d)).unwrap()), ["A small map"]);
+}
+
+/// A document without alt text or decorative items is written without Object Export Options, as
+/// before; one with them gets InDesign's form.
+#[test]
+fn object_export_options_are_written_only_where_set() {
+    let d = import_idml(&fixture()).unwrap();
+    assert!(!zip_text(&export_idml(&d), "Spreads/").contains("ObjectExportOption"));
+    let mut d = d;
+    let id = d.spreads[0].items.iter().find(|i| i.graphic().is_some()).unwrap().id;
+    d.item_mut(id).unwrap().alt_text = "A harbour".into();
+    let spread = zip_text(&export_idml(&d), "Spreads/");
+    assert!(
+        spread.contains(r#"<ObjectExportOption AltTextSourceType="SourceCustom" CustomAltText="A harbour" ApplyTagType="TagFromStructure"/>"#),
+        "{spread}"
+    );
 }
 
 #[test]
