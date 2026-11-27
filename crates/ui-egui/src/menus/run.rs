@@ -250,12 +250,16 @@ fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "app.openPackageFolder" => app.pick_folder("package"),
         "app.openRecent" => {
             let index = p.get("index").cloned().unwrap_or(Value::Null);
-            let name = index
-                .as_u64()
-                .and_then(|i| usize::try_from(i).ok())
-                .and_then(|i| app.session.prefs.recent_files.get(i))
-                .map(|path| recent_label(path))
-                .unwrap_or_default();
+            let path = index.as_u64().and_then(|i| usize::try_from(i).ok()).and_then(|i| app.session.prefs.recent_files.get(i)).cloned();
+            // Read in the background, a file still there opens as File › Open opens it;
+            // `file.openRecent` explains a missing one.
+            #[cfg(not(target_arch = "wasm32"))]
+            if app.opens_in_background()
+                && let Some(path) = path.as_ref().filter(|p| designcraft_engine::io::is_file(p))
+            {
+                return Some(app.open_document(path.clone()));
+            }
+            let name = path.as_deref().map(recent_label).unwrap_or_default();
             app.open_named_file("file.openRecent", json!({"index": index}), name)
         }
         "app.placeDialog" => match (p.get("path").and_then(Value::as_str), p.get("paths").and_then(Value::as_array)) {
@@ -327,8 +331,17 @@ fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.exportInteractivePdf" => {
             let mut q = if p.is_object() { p.clone() } else { json!({}) };
-            for (k, v) in [("pageLayout", json!("single")), ("view", json!("fitPage")), ("bookmarksPanel", json!(true)), ("media", json!(true))] {
-                q.as_object_mut().map(|o| o.entry(k).or_insert(v));
+            // Interactive PDF keeps transparency live unless a caller explicitly requests flattening.
+            if let Some(o) = q.as_object_mut() {
+                for (k, v) in [
+                    ("pageLayout", json!("single")),
+                    ("view", json!("fitPage")),
+                    ("bookmarksPanel", json!(true)),
+                    ("media", json!(true)),
+                    ("flatten", json!(false)),
+                ] {
+                    o.entry(k).or_insert(v);
+                }
             }
             export_pdf(app, &q)
         }
@@ -418,7 +431,12 @@ fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             if !["", "high", "medium", "low"].contains(&v) {
                 return Some(Err(format!("unknown preset `{v}`")));
             }
+            if app.ui.pdf_export.resolved_flatten(&app.ui.flattener) != v {
+                app.ui.pdf_export.preset = "Custom".into();
+            }
             app.ui.flattener = v.to_string();
+            app.ui.pdf_export.flatten.clear();
+            app.ui.pdf_export.flatten_chosen = false;
             Ok(json!(v))
         }
         "app.graphicCell" => match p.get("path").and_then(Value::as_str) {
@@ -744,6 +762,9 @@ fn run_ui_part2(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             let cjk = crate::cjk_features(app);
             f["cjkFeatures"] = json!(cjk);
             f["cjkFeatures.initial"] = json!(cjk);
+            let rtl = crate::rtl_features(app);
+            f["rtlFeatures"] = json!(rtl);
+            f["rtlFeatures.initial"] = json!(rtl);
             f["section"] = json!("general");
             // The language previews as it changes; Cancel goes back to this one.
             f["openedLanguage"] = json!(app.ui.language);
@@ -865,6 +886,7 @@ fn run_ui_part3(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             flag(&mut app.ui.document_grid)
         }
         "view.textThreads" => flag(&mut app.ui.text_threads),
+        "view.linkBadge" => flag(&mut app.ui.link_badge),
         "view.hiddenCharacters" => flag(&mut app.ui.hidden_characters),
         "view.taggedFrames" => flag(&mut app.ui.tagged_frames),
         "view.storyEditorStyleColumn" => {
@@ -886,6 +908,7 @@ fn run_ui_part3(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(json!({"on": app.ui.story_editor_style_column, "width": app.ui.story_editor_style_width}))
         }
         "view.storyEditorDepthRuler" => flag(&mut app.ui.story_editor_depth_ruler),
+        "view.storyEditorParagraphMarks" => flag(&mut app.ui.story_editor_paragraph_marks),
         "window.hidePanels" | "window.hidePanelsExceptTools" => {
             let mode = if id == "window.hidePanels" { 1 } else { 2 };
             app.ui.hidden_panels = if app.ui.hidden_panels == mode { 0 } else { mode };
