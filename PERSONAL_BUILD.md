@@ -24,8 +24,6 @@ merge that keeps the new content, so `git pull` still works and nothing needs a 
 | `idml-alt-text` | Upstream `main` + IDML reads and writes images' alt text and decorative images (Object Export Options). Issue [#2974](https://github.com/storytold/designcraft/issues/2974); PR drafted, not yet posted (waits on an InDesign check of an exported file). |
 | `drop-fonts` | `web-document-fonts` + fonts dropped on the window (files, folders, zips) join the active document's fonts until quit. Builds on `web-document-fonts` (updated to its review fixes 2026-11-08; dropped folders and zips read within the same limits; 2026-11-14 to its merge of main). Not yet offered upstream. |
 
-`drop-relink` (2026-11-08) holds `web-relink` as it was before the drop split (`c3c2b2e`): dropped images named like a missing graphic relink it. It isn't in `personal` and has no PR yet; `web-relink` is now upstream (#1244), so it would need rebuilding on upstream `main`.
-
 Each branch is based on upstream `main` and merged into `personal` from there. On 2026-10-28 every branch took in upstream 0.14.0, whose clean-up split many large files into modules (`menus.rs`, `canvas.rs`, `ui-egui/src/lib.rs`, IDML import and export, PDF export, `cmd/file.rs`); each branch's change was carried into the new files. Never open an
 upstream PR from `personal` or `main`. Every branch above passes the checks on its own.
 
